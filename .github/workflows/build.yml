@@ -22,24 +22,42 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+        with:
+             submodules: true
 
       - uses: ./.github/actions/setup
 
       - name: Build the recovery service for the phone
-        run: cargo ndk -t arm64-v8a --platform 30 build --locked --release -p skyward
+        run: |
+          cd skyward
+          cargo ndk -t arm64-v8a --platform 30 build --locked --release -p skyward
 
       - name: Build the packer
-        run: cargo build --locked --release -p skyward-pack
+        run: |
+          cd skyward
+          cargo build --locked --release -p skyward-pack
 
       - name: Build system init
-        run: RUSTFLAGS="-C target-feature=+crt-static" cargo ndk -t arm64-v8a --platform 30 build --release -p skyward-system-init --target-dir target/system-init
+        run: |
+          cd skyward
+          RUSTFLAGS="-C target-feature=+crt-static" cargo ndk -t arm64-v8a --platform 30 build --release -p skyward-system-init --target-dir target/system-init
 
+      - name: Download stock recovery 
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: "snowwolf725/OnePlus12-fw-repos"
+          latest: true
+          filename: "recovery.zip"
+          out-file-path: "./"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
       # 关键诊断：stock ramdisk 里到底有没有打包器硬依赖的
       # system/bin/recovery 和 prop.default。没有就得改 Rust 代码。
       - name: Inspect the stock ramdisk
         run: |
+          unzip recovery.zip
           set +e
-          target/release/skyward-pack list stock/recovery_stock.img > ramdisk.txt 2> list.err
+          skyward/target/release/skyward-pack list recovery.img > ramdisk.txt 2> list.err
           echo "exit=$?"
           echo "===== 前 60 条 ====="
           head -60 ramdisk.txt
@@ -57,6 +75,7 @@ jobs:
         env:
           ASSET: ${{ inputs.stock_asset }}
         run: |
+          cd skyward
           target/release/skyward-pack recovery \
             --stock "stock/recovery_stock.img" \
             --binary target/aarch64-linux-android/release/skyward \
@@ -70,6 +89,7 @@ jobs:
           sha256sum skyward-waffle.img
           zip -9 skyward-waffle.zip skyward-waffle.img
           sha256sum skyward-waffle.zip
+          mv skyward-waffle.zip ..
           TIMESTAMP=$(date +"%Y%m%d")
           echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
 
@@ -82,6 +102,6 @@ jobs:
           tag_name: ${{ env.TIMESTAMP }}-Testimg
           body: |
             Device: Oneplus 12
-            Target: OOS14/15/16, COS14/15/16
+            Target: OOS14/15/16, COS14/15/16/17
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
