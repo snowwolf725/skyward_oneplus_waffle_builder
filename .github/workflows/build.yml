@@ -21,9 +21,6 @@ jobs:
              submodules: true
 
       - uses: ./.github/actions/setup
-
-      - name: Install jq (only if needed)
-        run: sudo apt install jq -y
   
       - name: Build the recovery service for the phone
         run: |
@@ -88,7 +85,7 @@ jobs:
           zip -9 skyward-waffle.zip skyward-waffle.img
           sha256sum skyward-waffle.zip
           mv skyward-waffle.zip ..
-          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.workspace.package.version')
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "skyward") | .version')
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           
       - name: Upload to Release
