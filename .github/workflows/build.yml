@@ -92,16 +92,16 @@ jobs:
           zip -9 skyward-waffle.zip skyward-waffle.img
           sha256sum skyward-waffle.zip
           mv skyward-waffle.zip ..
-          TIMESTAMP=$(date +"%Y%m%d")
-          echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
-
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.workspace.package.version')
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             skyward-waffle.zip
-          name: OnePlus12_Skyward
-          tag_name: ${{ env.TIMESTAMP }}-Testimg
+          name: OnePlus12_Skyward  ${{ env.VERSION }}
+          tag_name: ${{ env.VERSION }}
           body: |
             Device: Oneplus 12
             Target: OOS14/15/16, COS14/15/16/17
