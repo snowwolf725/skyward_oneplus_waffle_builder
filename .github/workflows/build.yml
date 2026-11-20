@@ -85,15 +85,15 @@ jobs:
           sha256sum skyward-waffle.img
           zip -9 skyward-waffle.zip skyward-waffle.img
           sha256sum skyward-waffle.zip
-          mv skyward-waffle.zip ..
-          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "skyward") | .version')
-          echo "VERSION=v$VERSION" >> $GITHUB_ENV
+          VERSION=v$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "skyward") | .version')
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          mv skyward-waffle.zip "../skyward-$VERSION-waffle-ColorOS.zip"
           
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            skyward-waffle.zip
+            skyward-*.zip
           name: OnePlus12_Skyward  ${{ env.VERSION }}
           tag_name: ${{ env.VERSION }}
           body: |
