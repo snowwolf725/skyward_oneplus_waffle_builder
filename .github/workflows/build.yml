@@ -77,7 +77,7 @@ jobs:
         run: |
           cd skyward
           target/release/skyward-pack recovery \
-            --stock "stock/recovery_stock.img" \
+            --stock "../recovery.img" \
             --binary target/aarch64-linux-android/release/skyward \
             --system-init target/system-init/aarch64-linux-android/release/system-init \
             --config devices/waffle.toml \
