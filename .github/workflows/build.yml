@@ -76,6 +76,8 @@ jobs:
           ASSET: ${{ inputs.stock_asset }}
         run: |
           cd skyward
+          cp ../patches/waffle.toml devices/waffle.toml
+          git apply ../patches/skyward-waffle.patch
           target/release/skyward-pack recovery \
             --stock "../recovery.img" \
             --binary target/aarch64-linux-android/release/skyward \
