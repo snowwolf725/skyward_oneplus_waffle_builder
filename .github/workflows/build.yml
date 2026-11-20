@@ -4,11 +4,6 @@ name: Build for OnePlus 12 (CPH2573)
 
 on:
   workflow_dispatch:
-    inputs:
-      stock_asset:
-        description: Release file name
-        required: true
-        default: recovery.img
 
 permissions:
   contents: write
@@ -72,8 +67,6 @@ jobs:
           cat list.err
 
       - name: Pack the recovery
-        env:
-          ASSET: ${{ inputs.stock_asset }}
         run: |
           cd skyward
           cp ../patches/waffle.toml devices/waffle.toml
