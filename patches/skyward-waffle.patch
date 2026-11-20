@@ -1,0 +1,1042 @@
+diff --git a/crates/skyward-config/src/lib.rs b/crates/skyward-config/src/lib.rs
+index 873967f..fd29f07 100644
+--- a/crates/skyward-config/src/lib.rs
++++ b/crates/skyward-config/src/lib.rs
+@@ -126,6 +126,11 @@ pub struct Wlan {
+     /// which the directory takes only from a program the running system
+     /// describes.
+     pub service: String,
++    /// Whether the driver leaves the radio blocked until its firmware is
++    /// up, as OnePlus's does: the rfkill switches are unblocked once the
++    /// interface has been made.
++    #[serde(default)]
++    pub unblock: bool,
+     /// The page the stock system asks over plain HTTP to tell whether a
+     /// network reaches the internet, which answers 204 with nothing.
+     pub probe: String,
+@@ -214,6 +219,11 @@ pub struct Haptics {
+     /// The file the driver says the motor's resonant frequency in, in
+     /// tenths of a hertz whatever its label.
+     pub resonance: String,
++    /// The file the driver says the motor's period in, in microseconds,
++    /// where it leaves the frequency at nothing until the motor is first
++    /// played, as OnePlus's does.
++    #[serde(default)]
++    pub period: Option<String>,
+     pub strength: Strength,
+ }
+ 
+@@ -271,6 +281,17 @@ pub struct Device {
+     /// System property that carries the vendor OS version.
+     #[serde(default = "default_os_version_prop")]
+     pub os_version_prop: String,
++    /// Whether the recovery puts SELinux in permissive mode before it
++    /// mounts the installed system's APEX bundles. Some phones' policies
++    /// refuse the loop worker the use of a file the recovery opened, which
++    /// makes those mounts fail while SELinux is enforcing.
++    #[serde(default)]
++    pub permissive: bool,
++    /// Whether the port offers file transfer beside adb while the recovery
++    /// waits. Some phones' USB setup cannot carry it; their configuration
++    /// leaves it out.
++    #[serde(default = "default_true")]
++    pub mtp: bool,
+ }
+ 
+ #[derive(Debug, Clone, Default, Deserialize)]
+@@ -288,6 +309,10 @@ pub struct Display {
+     /// sliding over another rounds its leading corners to it.
+     #[serde(default)]
+     pub corner_radius: u32,
++    /// Whether the settings offer to lay the pages out the other way round,
++    /// for a panel whose touch grid matches its own orientation.
++    #[serde(default)]
++    pub orientation_switch: bool,
+ }
+ 
+ #[derive(Debug, Clone, Deserialize)]
+@@ -317,6 +342,17 @@ pub struct Touch {
+     /// step of starting the controller.
+     #[serde(default)]
+     pub writes: Vec<Write>,
++    /// Whether the touch panel reports its axes the other way round from
++    /// the panel the recovery draws on, as a panel mounted landscape in a
++    /// portrait frame does.
++    #[serde(default)]
++    pub swap_xy: bool,
++    /// Whether the touch panel's X axis runs the other way.
++    #[serde(default)]
++    pub invert_x: bool,
++    /// Whether the touch panel's Y axis runs the other way.
++    #[serde(default)]
++    pub invert_y: bool,
+ }
+ 
+ /// Partitions as the phone itself mounts them.
+@@ -541,6 +577,9 @@ impl DeviceConfig {
+         if let Some(haptics) = &cfg.haptics {
+             let file = &haptics.resonance;
+             ensure!(Path::new(file).is_absolute(), "[haptics] resonance: {file} is not an absolute path");
++            if let Some(period) = &haptics.period {
++                ensure!(Path::new(period).is_absolute(), "[haptics] period: {period} is not an absolute path");
++            }
+             let Strength { lightest, strongest } = haptics.strength;
+             ensure!(
+                 0.0 < lightest && lightest < strongest && strongest <= 1.0,
+diff --git a/crates/skyward-crypto/src/data.rs b/crates/skyward-crypto/src/data.rs
+index 53903a5..0490313 100644
+--- a/crates/skyward-crypto/src/data.rs
++++ b/crates/skyward-crypto/src/data.rs
+@@ -132,11 +132,16 @@ fn show_owner_storage() -> Result<()> {
+ pub fn close() -> Result<()> {
+     for at in [SDCARD, MOUNT] {
+         if mount::is_mount_point(Path::new(at))? {
+-            mount::umount(Path::new(at))?;
++            // A file still open, such as one the file manager shows, keeps a
++            // plain unmount from going through; taking the mount out of the
++            // tree lets init's shutdown unmount it.
++            if mount::umount(Path::new(at)).is_err() {
++                mount::umount_detach(Path::new(at))?;
++            }
+         }
+     }
+     if dm::status(MAPPED)?.is_some() {
+-        dm::remove(MAPPED)?;
++        let _ = dm::remove(MAPPED);
+     }
+     Ok(())
+ }
+diff --git a/crates/skyward-info/src/lib.rs b/crates/skyward-info/src/lib.rs
+index 6f5dc71..f806be9 100644
+--- a/crates/skyward-info/src/lib.rs
++++ b/crates/skyward-info/src/lib.rs
+@@ -218,7 +218,8 @@ impl SystemProps {
+ 
+ /// The order init reads build.prop files in at boot; later files override
+ /// earlier ones.
+-const PROP_ORDER: [&str; 8] = ["system", "system_ext", "system_dlkm", "vendor", "vendor_dlkm", "odm_dlkm", "odm", "product"];
++const PROP_ORDER: [&str; 9] =
++    ["system", "system_ext", "system_dlkm", "vendor", "vendor_dlkm", "odm_dlkm", "odm", "product", "my_manifest"];
+ 
+ /// What init names the properties the bootloader passes.
+ const BOOT_PROPS: &str = "ro.boot.";
+@@ -240,7 +241,10 @@ pub fn installed_props(slot: Slot) -> Result<HashMap<String, String>> {
+         let files: &[&str] = match base(m).as_str() {
+             "system" => &["system/build.prop"],
+             "vendor" => &["default.prop", "build.prop"],
+-            _ => &["etc/build.prop"],
++            // OnePlus keeps some partitions' build.prop at the root and
++            // others under etc; my_manifest, which carries the ColorOS
++            // version as ro.build.display.id, is one of the former.
++            _ => &["build.prop", "etc/build.prop"],
+         };
+         for f in files {
+             let path = m.mount_point.join(f);
+diff --git a/crates/skyward-modules/src/lib.rs b/crates/skyward-modules/src/lib.rs
+index ec33ac9..15923de 100644
+--- a/crates/skyward-modules/src/lib.rs
++++ b/crates/skyward-modules/src/lib.rs
+@@ -1,4 +1,4 @@
+-use anyhow::{anyhow, bail, Context, Result};
++use anyhow::{anyhow, bail, ensure, Context, Result};
+ use std::collections::{BTreeMap, BTreeSet};
+ use std::fs;
+ use std::path::{Path, PathBuf};
+@@ -14,7 +14,10 @@ pub fn source_dir(source: &str) -> Result<PathBuf> {
+         "vendor_boot" => "/lib/modules",
+         "vendor_dlkm" => "/vendor_dlkm/lib/modules",
+         "vendor" => "/vendor/lib/modules",
+-        "system_dlkm" => "/system_dlkm/flatten/lib/modules",
++        // Xiaomi keeps the kernel's modules under flatten; other phones,
++        // OnePlus among them, keep them directly under lib.
++        "system_dlkm" if Path::new("/system_dlkm/flatten/lib/modules").is_dir() => "/system_dlkm/flatten/lib/modules",
++        "system_dlkm" => "/system_dlkm/lib/modules",
+         _ => bail!("unknown module source {source:?}"),
+     }))
+ }
+@@ -24,18 +27,15 @@ pub fn source_dir(source: &str) -> Result<PathBuf> {
+ /// that directory's modules.dep; a module the kernel already has counts as
+ /// loaded. Returns the files loaded, dependencies first.
+ pub fn load(dirs: &[PathBuf], names: &[String]) -> Result<Vec<PathBuf>> {
++    let graph = parse_all(dirs)?;
+     let mut loaded = Vec::new();
+     for name in names {
+         let file = format!("{name}.ko");
+-        let dir = dirs
+-            .iter()
+-            .find(|d| d.join(&file).is_file())
+-            .ok_or_else(|| anyhow!("{file} is in none of {dirs:?}"))?;
+-        let graph = parse_dep(dir)?;
++        ensure!(graph.resolve_path(&file).is_some(), "{file} is in none of {dirs:?}");
+         for m in graph.load_order(std::slice::from_ref(&file)) {
+             let path = graph
+                 .resolve_path(&m)
+-                .ok_or_else(|| anyhow!("{m} is listed in {}/modules.dep but missing", dir.display()))?;
++                .ok_or_else(|| anyhow!("{m} is listed in a modules.dep but missing from all of {dirs:?}"))?;
+             insmod(&path, "")?;
+             loaded.push(path);
+         }
+@@ -50,6 +50,11 @@ pub fn load(dirs: &[PathBuf], names: &[String]) -> Result<Vec<PathBuf>> {
+ #[derive(Debug, Default)]
+ pub struct ModuleGraph {
+     pub base: PathBuf,
++    /// Every folder the modules may come from, in the order they are
++    /// searched: a vendor's modules.dep names the kernel's own modules by
++    /// the path the running system mounts them at, not where a recovery
++    /// mounts them.
++    pub dirs: Vec<PathBuf>,
+     pub deps: BTreeMap<String, Vec<String>>,
+ }
+ 
+@@ -71,7 +76,28 @@ pub fn parse_dep(base: impl AsRef<Path>) -> Result<ModuleGraph> {
+         let ds = rhs.split_whitespace().map(basename).collect();
+         deps.insert(name, ds);
+     }
+-    Ok(ModuleGraph { base, deps })
++    Ok(ModuleGraph { base: base.clone(), dirs: vec![base], deps })
++}
++
++/// A graph over every folder's modules.dep, so that a dependency named in
++/// one folder's file is found in whichever folder holds it.
++pub fn parse_all(dirs: &[PathBuf]) -> Result<ModuleGraph> {
++    let mut graph = ModuleGraph { base: dirs.first().cloned().unwrap_or_default(), dirs: dirs.to_vec(), deps: BTreeMap::new() };
++    for dir in dirs {
++        let dep_path = dir.join("modules.dep");
++        let Ok(text) = fs::read_to_string(&dep_path) else { continue };
++        for line in text.lines() {
++            let line = line.trim();
++            if line.is_empty() {
++                continue;
++            }
++            let Some((lhs, rhs)) = line.split_once(':') else { continue };
++            let name = basename(lhs.trim());
++            let ds: Vec<String> = rhs.split_whitespace().map(basename).collect();
++            graph.deps.entry(name).or_insert(ds);
++        }
++    }
++    Ok(graph)
+ }
+ 
+ fn basename(p: &str) -> String {
+@@ -112,11 +138,18 @@ impl ModuleGraph {
+     }
+ 
+     pub fn resolve_path(&self, module: &str) -> Option<PathBuf> {
+-        let direct = self.base.join(module);
+-        if direct.exists() {
+-            return Some(direct);
++        for dir in &self.dirs {
++            let direct = dir.join(module);
++            if direct.is_file() {
++                return Some(direct);
++            }
++        }
++        for dir in &self.dirs {
++            if let Some(found) = find_file(dir, module) {
++                return Some(found);
++            }
+         }
+-        find_file(&self.base, module)
++        None
+     }
+ }
+ 
+@@ -173,7 +206,7 @@ mod tests {
+         deps.insert("a.ko".to_string(), vec!["b.ko".to_string()]);
+         deps.insert("b.ko".to_string(), vec!["c.ko".to_string()]);
+         deps.insert("c.ko".to_string(), vec![]);
+-        let g = ModuleGraph { base: PathBuf::new(), deps };
++        let g = ModuleGraph { base: PathBuf::new(), dirs: Vec::new(), deps };
+         let order = g.load_order(&["a.ko".to_string()]);
+         assert_eq!(order, vec!["c.ko", "b.ko", "a.ko"]);
+     }
+diff --git a/crates/skyward-net/src/github.rs b/crates/skyward-net/src/github.rs
+index ff45a89..9eb9ee2 100644
+--- a/crates/skyward-net/src/github.rs
++++ b/crates/skyward-net/src/github.rs
+@@ -5,7 +5,7 @@ use anyhow::{bail, ensure, Context, Result};
+ use serde::Deserialize;
+ 
+ /// Where GitHub answers which release of Skyward is the newest.
+-pub const LATEST: &str = "https://api.github.com/repos/kirklin/skyward/releases/latest";
++pub const LATEST: &str = "https://api.github.com/repos/snowwolf725/skyward/releases/latest";
+ 
+ /// The version of GitHub's API the answer is read as.
+ const API_VERSION: &str = "2022-11-28";
+diff --git a/crates/skyward-net/src/iface.rs b/crates/skyward-net/src/iface.rs
+index b84b8ca..7a29a16 100644
+--- a/crates/skyward-net/src/iface.rs
++++ b/crates/skyward-net/src/iface.rs
+@@ -81,6 +81,10 @@ pub fn set_up(interface: &str, up: bool) -> Result<()> {
+     let fd = socket()?;
+     let mut r = request(interface)?;
+     ioctl(&fd, libc::SIOCGIFFLAGS as libc::c_int, (&mut r as *mut libc::ifreq).cast(), &format!("read how {interface} stands"))?;
++    let already = unsafe { r.ifr_ifru.ifru_flags & libc::IFF_UP as libc::c_short != 0 };
++    if up == already {
++        return Ok(());
++    }
+     unsafe {
+         if up {
+             r.ifr_ifru.ifru_flags |= libc::IFF_UP as libc::c_short;
+diff --git a/crates/skyward-pack/src/main.rs b/crates/skyward-pack/src/main.rs
+index a4b9a90..675c52a 100644
+--- a/crates/skyward-pack/src/main.rs
++++ b/crates/skyward-pack/src/main.rs
+@@ -134,6 +134,26 @@ fn main() -> Result<()> {
+             if let Some(e) = rd.entries.iter().find(|e| e.name == "FFiles" || e.name.starts_with("twres")) {
+                 anyhow::bail!("{} holds {}, which is not a stock recovery", stock.display(), e.name);
+             }
++            // OnePlus's recovery init starts its own phoenix_recovery
++            // service. The same script also defines the recovery service
++            // this image replaces, so have init start that instead.
++            if let Some(init) = rd.entries.iter_mut().find(|e| e.name == "system/etc/init/hw/init.rc") {
++                let before = b"start phoenix_recovery";
++                let after = b"start recovery";
++                if let Some(at) = init.data.windows(before.len()).position(|w| w == before) {
++                    init.data.splice(at..at + before.len(), after.iter().copied());
++                    println!("init.rc: the recovery service is started in place of phoenix_recovery");
++                }
++                // phoenix_recovery has no class, so `class_start default`
++                // would start it beside the recovery service; make it
++                // something only a name starts.
++                let phoenix = b"service phoenix_recovery /system/bin/phoenix_recovery";
++                if let Some(at) = init.data.windows(phoenix.len()).position(|w| w == phoenix) {
++                    let at = at + phoenix.len();
++                    init.data.splice(at..at, b"\n    disabled".iter().copied());
++                    println!("init.rc: phoenix_recovery no longer starts with the default class");
++                }
++            }
+             let read = |p: &PathBuf| std::fs::read(p).with_context(|| format!("read {}", p.display()));
+             skyward_config::DeviceConfig::load(&config)?;
+             rd.replace(paths::RECOVERY, read(&binary)?)?;
+diff --git a/crates/skyward-programs/src/phone.rs b/crates/skyward-programs/src/phone.rs
+index ad4a541..6daf1d3 100644
+--- a/crates/skyward-programs/src/phone.rs
++++ b/crates/skyward-programs/src/phone.rs
+@@ -316,7 +316,16 @@ impl Phone {
+                 Err(e) if e.kind() == ErrorKind::NotFound => continue,
+                 Err(e) => return Err(e).with_context(|| format!("read {}", file.display())),
+             };
+-            let script = script::read(&text).with_context(|| format!("read {path}"))?;
++            // A vendor script init itself passes over, such as one commented
++            // out with a syntax init does not know, is passed over here too;
++            // the programs it would have described are not started.
++            let script = match script::read(&text) {
++                Ok(script) => script,
++                Err(e) => {
++                    eprintln!("skip {path}: {e:#}");
++                    continue;
++                }
++            };
+             waiting.extend(script.imports.iter().filter_map(|import| self.expand(import)));
+             self.actions.extend(script.actions);
+             for mut program in script.programs {
+diff --git a/crates/skyward-programs/src/script.rs b/crates/skyward-programs/src/script.rs
+index 22f6b81..c7bb1eb 100644
+--- a/crates/skyward-programs/src/script.rs
++++ b/crates/skyward-programs/src/script.rs
+@@ -96,6 +96,11 @@ pub fn read(text: &str) -> Result<Script> {
+     let mut section = Section::None;
+     for (number, words) in lines(text)? {
+         let Some(first) = words.first() else { continue };
++        // Some vendor scripts comment whole lines out with //, which init's
++        // own reader does not, and which changes nothing here.
++        if first.starts_with("//") {
++            continue;
++        }
+         match first.as_str() {
+             "import" => {
+                 ensure!(words.len() == 2, "line {number}: an import names one script");
+@@ -156,6 +161,21 @@ fn lines(text: &str) -> Result<Vec<(usize, Vec<String>)>> {
+             '#' if word.is_none() => {
+                 while chars.next_if(|&c| c != '\n').is_some() {}
+             }
++            '/' if word.is_none() && chars.peek() == Some(&'*') => {
++                chars.next();
++                let mut prev = '\0';
++                loop {
++                    let c = chars.next().with_context(|| format!("line {began}: a comment is not closed"))?;
++                    if c == '\n' {
++                        number += 1;
++                    }
++                    if prev == '*' && c == '/' {
++                        break;
++                    }
++                    prev = c;
++                }
++                began = number;
++            }
+             '"' => {
+                 let quoted = word.get_or_insert_with(String::new);
+                 loop {
+diff --git a/crates/skyward-programs/src/secure.rs b/crates/skyward-programs/src/secure.rs
+index 33d73a5..7cf8eab 100644
+--- a/crates/skyward-programs/src/secure.rs
++++ b/crates/skyward-programs/src/secure.rs
+@@ -45,16 +45,23 @@ enum Through {
+     ElementService,
+     /// A service of the secure element's maker's own, by its interface.
+     Own(&'static str),
++    /// The secure world directly, as Xiaomi's weaver does.
++    Direct,
+ }
+ 
+ /// The makes of weaver, each by what the name of its program ends in, the
+ /// longer endings first: Thales' and NXP's go through Android's secure
+ /// element service, and Goodix's, whose program is named after no maker,
+ /// through Goodix's own.
+-const WEAVERS: [(&str, Through); 3] = [
++const WEAVERS: [(&str, Through); 5] = [
+     (".thales", Through::ElementService),
+     (".nxp-qti", Through::ElementService),
++    // OnePlus ships NXP's weaver under this name.
++    (".nxp", Through::ElementService),
+     ("weaver-service", Through::Own("vendor.goodix.hardware.secure_element_aidl.IGdxEse")),
++    // Xiaomi's HyperOS 4 weaver registers Android's IWeaver itself and
++    // reaches the secure world directly, with no secure element service.
++    ("android.hardware.weaver", Through::Direct),
+ ];
+ 
+ /// Qualcomm's programs between Android and the secure world, by the names
+@@ -241,6 +248,7 @@ fn weaver(phone: &Phone) -> Result<Vec<Step>> {
+     let file = file_name(program);
+     let (_, through) = WEAVERS.iter().find(|(ending, _)| file.ends_with(ending)).with_context(|| format!("{} is a weaver of a make the recovery does not know", program.path))?;
+     match through {
++        Through::Direct => {}
+         Through::Own(interface) => {
+             let own = phone
+                 .services
+diff --git a/crates/skyward-ui/src/app/act.rs b/crates/skyward-ui/src/app/act.rs
+index 1033f0c..6856dac 100644
+--- a/crates/skyward-ui/src/app/act.rs
++++ b/crates/skyward-ui/src/app/act.rs
+@@ -57,6 +57,7 @@ impl App {
+                     Switch::Signature => &mut self.state.check_signature,
+                     Switch::KeepRecovery => &mut self.state.keep_recovery,
+                     Switch::ShowPassword => &mut self.state.show_password,
++                    Switch::Portrait => &mut self.state.portrait,
+                     Switch::Wlan => unreachable!("the WLAN switch is turned above"),
+                 };
+                 *on = !*on;
+@@ -65,6 +66,9 @@ impl App {
+                 if switch == Switch::FileTransfer {
+                     return vec![Effect::FileTransfer(now_on)];
+                 }
++                if switch == Switch::Portrait {
++                    return vec![Effect::Orientation(now_on)];
++                }
+             }
+             Action::MountToggle(i) => {
+                 if self.state.mount_failure.take().is_some() {
+diff --git a/crates/skyward-ui/src/app/input.rs b/crates/skyward-ui/src/app/input.rs
+index 9fe100d..5c44425 100644
+--- a/crates/skyward-ui/src/app/input.rs
++++ b/crates/skyward-ui/src/app/input.rs
+@@ -207,6 +207,11 @@ impl App {
+                     if let Some(p) = &mut self.row_press {
+                         p.lift(now);
+                     }
++                    // Every tap answers with the motor when touch vibration
++                    // is on, as the phone's own system does.
++                    if self.state.vibrate {
++                        fx.push(Effect::Haptic);
++                    }
+                     fx.extend(self.act(a, now));
+                 }
+                 Drag::Press { x, y, action: None, .. } if self.screen() == Screen::Editor => self.place_caret(f, x, y + scroll),
+diff --git a/crates/skyward-ui/src/app/mod.rs b/crates/skyward-ui/src/app/mod.rs
+index c05e99f..cae562a 100644
+--- a/crates/skyward-ui/src/app/mod.rs
++++ b/crates/skyward-ui/src/app/mod.rs
+@@ -429,6 +429,8 @@ pub enum Effect {
+     Screenshot { storage: bool },
+     /// Offer internal storage to a computer over USB, or stop.
+     FileTransfer(bool),
++    /// Lay the pages out portrait, or landscape, from the next start.
++    Orientation(bool),
+     /// Start receiving a package over USB.
+     Sideload,
+     /// Start installing the file at this path from the top of a place,
+diff --git a/crates/skyward-ui/src/app/prefs.rs b/crates/skyward-ui/src/app/prefs.rs
+index 3475fc3..8a3074b 100644
+--- a/crates/skyward-ui/src/app/prefs.rs
++++ b/crates/skyward-ui/src/app/prefs.rs
+@@ -29,6 +29,8 @@ pub enum Switch {
+     Wlan,
+     /// Show the password typed rather than a dot for each character.
+     ShowPassword,
++    /// Lay the pages out portrait instead of the display's own landscape.
++    Portrait,
+ }
+ 
+ /// How long the screen stays on with nothing touched, in milliseconds, in
+diff --git a/crates/skyward-ui/src/app/state.rs b/crates/skyward-ui/src/app/state.rs
+index 24de4cc..2bd1531 100644
+--- a/crates/skyward-ui/src/app/state.rs
++++ b/crates/skyward-ui/src/app/state.rs
+@@ -20,6 +20,11 @@ pub struct State {
+     /// place in [`TIME_ZONES`].
+     pub time_zone: usize,
+     pub vibrate: bool,
++    /// The pages are laid out with the long edge down, as a tablet held
++    /// upright, instead of the display's own landscape mode.
++    pub portrait: bool,
++    /// The settings offer the portrait layout on this panel.
++    pub orientation_switch: bool,
+     /// How strongly the motor taps, from 0 at the slider's left end to 1
+     /// at its right.
+     pub vibration: f32,
+@@ -194,6 +199,8 @@ impl Default for State {
+             screen_off: 3,
+             time_zone: 0,
+             vibrate: true,
++            portrait: false,
++            orientation_switch: false,
+             vibration: SLIDER_START,
+             file_transfer: true,
+             reboot: 0,
+diff --git a/crates/skyward-ui/src/pages.rs b/crates/skyward-ui/src/pages.rs
+index 1951193..e100568 100644
+--- a/crates/skyward-ui/src/pages.rs
++++ b/crates/skyward-ui/src/pages.rs
+@@ -371,11 +371,22 @@ pub fn settings(cx: &Ctx) -> Frame {
+         out.push(Hit { rect: r, action: Action::Toggle(Switch::Vibrate) });
+     }
+     y = widgets::section(&mut c, t, f, vibration.bottom, l.pick(["通用", "一般", "General"]));
+-    let general = widgets::list(&mut c, t, f, y, &[
++    let mut general_rows = vec![
+         Row::new(l.pick(LANGUAGE)).icon(BLUE, Icon::Globe).trail(Trail::Value(l.name())),
+         Row::new(l.pick(TIME_ZONE)).icon(ORANGE, Icon::Clock).trail(Trail::Value(l.pick(TIME_ZONES[s.time_zone].0))),
+-    ]);
+-    out.extend(hits(&general.rows, &[Action::Open(Screen::Language), Action::Open(Screen::TimeZone)]));
++    ];
++    let mut general_actions = vec![Action::Open(Screen::Language), Action::Open(Screen::TimeZone)];
++    if s.orientation_switch {
++        let value = if s.portrait {
++            l.pick(["竖屏", "直向", "Portrait"])
++        } else {
++            l.pick(["横屏", "橫向", "Landscape"])
++        };
++        general_rows.push(Row::new(l.pick(["屏幕方向", "螢幕方向", "Screen orientation"])).icon(SLATE, Icon::Phone).trail(Trail::Value(value)));
++        general_actions.push(Action::Toggle(Switch::Portrait));
++    }
++    let general = widgets::list(&mut c, t, f, y, &general_rows);
++    out.extend(hits(&general.rows, &general_actions));
+     y = widgets::section(&mut c, t, f, general.bottom, "USB");
+     let usb = widgets::list(&mut c, t, f, y, &[Row::new(l.pick(["文件传输", "檔案傳輸", "File transfer"])).icon(BLUE, Icon::Usb).trail(Trail::Switch(s.file_transfer))]);
+     out.extend(hits(&usb.rows, &[Action::Toggle(Switch::FileTransfer)]));
+diff --git a/crates/skyward-ui/src/settings.rs b/crates/skyward-ui/src/settings.rs
+index 294515b..2123861 100644
+--- a/crates/skyward-ui/src/settings.rs
++++ b/crates/skyward-ui/src/settings.rs
+@@ -45,6 +45,8 @@ pub struct Settings {
+     /// The time zone, by its name in the tz database.
+     pub time_zone: String,
+     pub vibrate: bool,
++    /// The pages are laid out portrait, with the long edge down.
++    pub portrait: bool,
+     /// The vibration slider's place, from 0 at its left end to 1.
+     pub vibration: f32,
+     /// A computer connected over USB is offered internal storage.
+@@ -124,6 +126,7 @@ impl Settings {
+             screen_off: SCREEN_OFF[state.screen_off].map_or(0, |ms| ms / 1000),
+             time_zone: TIME_ZONES[state.time_zone].2.to_string(),
+             vibrate: state.vibrate,
++            portrait: state.portrait,
+             vibration: state.vibration,
+             file_transfer: state.file_transfer,
+             install: Install { check_signature: state.check_signature, keep_recovery: state.keep_recovery },
+@@ -170,6 +173,7 @@ impl Settings {
+             state.language_chosen = true;
+         }
+         state.dark = self.dark;
++        state.portrait = self.portrait;
+         if (0.0..=1.0).contains(&self.brightness) {
+             state.brightness = self.brightness;
+         }
+diff --git a/crates/skyward-ui/src/surface.rs b/crates/skyward-ui/src/surface.rs
+index ab27c29..c49e8a8 100644
+--- a/crates/skyward-ui/src/surface.rs
++++ b/crates/skyward-ui/src/surface.rs
+@@ -57,6 +57,18 @@ impl SdeMode {
+     }
+ }
+ 
++/// A mode's refresh rate: what the kernel computes, or the number the
++/// mode's name ends in when the kernel gives none, as some Qualcomm modes do.
++fn refresh(mode: &drm::control::Mode) -> u32 {
++    let told = mode.vrefresh();
++    if told > 0 {
++        return told;
++    }
++    let name = mode.name().to_string_lossy();
++    let digits: String = name.chars().rev().take_while(|c| c.is_ascii_digit()).collect();
++    digits.chars().rev().collect::<String>().parse().unwrap_or(0)
++}
++
+ /// Sub-pixel rendering by the display processor. A panel that shows two of
+ /// the three colours at each pixel, and leaves the rendering for that to the
+ /// display processor, names its layout as spr_pack_type in the connector's
+@@ -541,7 +553,7 @@ pub mod kms {
+                 .iter()
+                 .filter(|m| m.size() == preferred.size())
+                 .rev()
+-                .max_by_key(|m| m.vrefresh())
++                .max_by_key(|m| refresh(m))
+                 .expect("the preferred mode itself has the preferred size");
+             let (w, h) = (mode.size().0 as u32, mode.size().1 as u32);
+ 
+@@ -709,7 +721,7 @@ pub mod kms {
+             // The panel comes up in its preferred mode, then switches to the
+             // fastest, as `to_fastest` says why.
+             commit(&card, req, AtomicCommitFlags::ALLOW_MODESET).context("set the panel mode")?;
+-            let fastest = (mode.vrefresh() != preferred.vrefresh()).then_some(blob);
++            let fastest = (refresh(&mode) != refresh(preferred)).then_some(blob);
+ 
+             let ids: Vec<u32> = planes.iter().map(|p| u32::from(p.0)).collect();
+             let summary = format!(
+@@ -717,7 +729,7 @@ pub mod kms {
+                 conn.interface(),
+                 u32::from(conn.handle()),
+                 mode.name(),
+-                mode.vrefresh(),
++                refresh(&mode),
+                 u32::from(crtc),
+                 fourcc,
+                 spr.as_ref().map(|(_, _, name)| format!(", sub-pixel rendering through {name}")).unwrap_or_default()
+@@ -856,22 +868,40 @@ pub mod kms {
+         /// A display turned off comes on again with the frame, in the
+         /// panel's preferred mode, as it first came up.
+         fn present(&mut self, canvas: &Canvas) -> Result<()> {
+-            if (canvas.w, canvas.h) != (self.w, self.h) {
++            let rotated = (canvas.w, canvas.h) == (self.h, self.w) && (self.w, self.h) != (self.h, self.w);
++            if !rotated && (canvas.w, canvas.h) != (self.w, self.h) {
+                 return Err(anyhow!("canvas {}x{} does not match the display {}x{}", canvas.w, canvas.h, self.w, self.h));
+             }
+             let order = self.order;
+             let buf = &self.bufs[self.back];
+             let pitch = buffer::Buffer::pitch(&buf.db) as usize;
+-            let row = self.w as usize * 4;
+             let dst = unsafe { std::slice::from_raw_parts_mut(buf.map, buf.len) };
+-            for y in 0..self.h as usize {
+-                let src = &canvas.data[y * row..(y + 1) * row];
+-                let out = &mut dst[y * pitch..y * pitch + row];
+-                match order {
+-                    Order::Rgba => out.copy_from_slice(src),
+-                    Order::Bgra => {
+-                        for (o, s) in out.as_chunks_mut::<4>().0.iter_mut().zip(src.as_chunks::<4>().0) {
+-                            *o = [s[2], s[1], s[0], s[3]];
++            if rotated {
++                // The pages are laid out portrait while the display's mode is
++                // landscape (or the other way round). Turn the frame a
++                // quarter counter-clockwise into the buffer.
++                let (lw, lh) = (canvas.w as usize, canvas.h as usize);
++                for y in 0..lh {
++                    for x in 0..lw {
++                        let s = &canvas.data[(y * lw + x) * 4..(y * lw + x) * 4 + 4];
++                        let o = (lw - 1 - x) * pitch + y * 4;
++                        dst[o..o + 4].copy_from_slice(&match order {
++                            Order::Rgba => [s[0], s[1], s[2], s[3]],
++                            Order::Bgra => [s[2], s[1], s[0], s[3]],
++                        });
++                    }
++                }
++            } else {
++                let row = self.w as usize * 4;
++                for y in 0..self.h as usize {
++                    let src = &canvas.data[y * row..(y + 1) * row];
++                    let out = &mut dst[y * pitch..y * pitch + row];
++                    match order {
++                        Order::Rgba => out.copy_from_slice(src),
++                        Order::Bgra => {
++                            for (o, s) in out.as_chunks_mut::<4>().0.iter_mut().zip(src.as_chunks::<4>().0) {
++                                *o = [s[2], s[1], s[0], s[3]];
++                            }
+                         }
+                     }
+                 }
+diff --git a/crates/skyward-vab/src/partitions.rs b/crates/skyward-vab/src/partitions.rs
+index 57bc34c..d35f863 100644
+--- a/crates/skyward-vab/src/partitions.rs
++++ b/crates/skyward-vab/src/partitions.rs
+@@ -4,6 +4,7 @@ use anyhow::{ensure, Context, Result};
+ use skyward_block::{devnum, dm, mount, BY_NAME};
+ use skyward_lp::{Extent, Metadata, Partition, ATTR_DISABLED};
+ use std::fs;
++use std::io::ErrorKind;
+ use std::path::{Path, PathBuf};
+ 
+ /// A logical partition of super, mapped and mounted read-only.
+@@ -398,9 +399,17 @@ pub fn release_partitions(slot: Slot, busy: &[PathBuf]) -> Result<()> {
+     for m in mounted_partitions(slot)?.into_iter().rev() {
+         if busy.contains(&m.mount_point) {
+             mount::umount_detach_over(&m.mount_point)?;
+-        } else {
+-            mount::umount_over(&m.mount_point)?;
+-            snapshots::unmap_snapshot(&m.partition)?;
++            continue;
++        }
++        // Something other than the services we pinned may hold files on a
++        // partition. Treat a busy mount like a pinned one: detach it lazily
++        // and leave its device in place until the last reference drops.
++        match mount::umount_over(&m.mount_point) {
++            Ok(()) => snapshots::unmap_snapshot(&m.partition)?,
++            Err(e) if e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == ErrorKind::ResourceBusy) => {
++                mount::umount_detach_over(&m.mount_point)?;
++            }
++            Err(e) => return Err(e),
+         }
+     }
+     Ok(())
+diff --git a/crates/skyward/src/haptics.rs b/crates/skyward/src/haptics.rs
+index c9419bf..f2c5839 100644
+--- a/crates/skyward/src/haptics.rs
++++ b/crates/skyward/src/haptics.rs
+@@ -56,7 +56,21 @@ impl Haptics {
+     /// only as it is played.
+     pub fn open(cfg: &skyward_config::Haptics) -> Result<Haptics> {
+         let (path, dev) = motor()?;
+-        let hz = resonance(&cfg.resonance)?;
++        let hz = match resonance(&cfg.resonance) {
++            Ok(hz) => hz,
++            Err(first) => match &cfg.period {
++                // Some drivers, OnePlus's among them, leave the frequency at
++                // nothing until the motor is first played, and say the
++                // period instead.
++                Some(file) => {
++                    let text = fs::read_to_string(file).with_context(|| format!("read {file}"))?;
++                    let us: u32 = text.split_whitespace().next().and_then(|n| n.parse().ok()).with_context(|| format!("{file} holds {text:?}"))?;
++                    ensure!(us > 0, "{file} says the motor's period is 0 us");
++                    1_000_000.0 / us as f32
++                }
++                None => return Err(first),
++            },
++        };
+         let click = match cfg.click {
+             Some(id) => {
+                 eprintln!("haptics {}: clicks with waveform {id}, ticks made for a motor swinging at {hz} Hz", path.display());
+diff --git a/crates/skyward/src/input.rs b/crates/skyward/src/input.rs
+index 4a9d65c..2cfc81d 100644
+--- a/crates/skyward/src/input.rs
++++ b/crates/skyward/src/input.rs
+@@ -79,13 +79,16 @@ struct Panel {
+     was_down: bool,
+     raw: (i32, i32),
+     moved: bool,
++    swap_xy: bool,
++    invert_x: bool,
++    invert_y: bool,
+     /// The kernel dropped events that were not read in time; what arrives
+     /// up to the next report is incomplete.
+     dropped: bool,
+ }
+ 
+ impl Panel {
+-    fn new(path: PathBuf, dev: RawDevice) -> Result<Self> {
++    fn new(path: PathBuf, dev: RawDevice, swap_xy: bool, invert_x: bool, invert_y: bool) -> Result<Self> {
+         let mut x_range = None;
+         let mut y_range = None;
+         let mut slots = 1;
+@@ -108,8 +111,22 @@ impl Panel {
+             return Err(io::Error::last_os_error()).context("stamp touch events with the monotonic clock");
+         }
+         set_nonblocking(dev.as_raw_fd()).context("make touch non-blocking")?;
+-        let mut panel =
+-            Panel { dev, path, x_range, y_range, slots, slot: 0, down: false, was_down: false, raw: (0, 0), moved: false, dropped: false };
++        let mut panel = Panel {
++            dev,
++            path,
++            x_range,
++            y_range,
++            slots,
++            slot: 0,
++            down: false,
++            was_down: false,
++            raw: (0, 0),
++            moved: false,
++            swap_xy,
++            invert_x,
++            invert_y,
++            dropped: false,
++        };
+         // The kernel drops a position equal to the one a slot already holds,
+         // so a touch landing where the last one lifted carries no position;
+         // start from what the panel holds now.
+@@ -147,8 +164,18 @@ impl Panel {
+                     let time = e.as_ref().time;
+                     let at = time.tv_sec as u64 * 1000 + time.tv_usec as u64 / 1000;
+                     let span = |r: (i32, i32)| (r.1 - r.0).max(1) as f32;
+-                    let x = (self.raw.0 - self.x_range.0) as f32 / span(self.x_range) * w;
+-                    let y = (self.raw.1 - self.y_range.0) as f32 / span(self.y_range) * h;
++                    let (raw_x, raw_y, x_range, y_range) = match self.swap_xy {
++                        true => (self.raw.1, self.raw.0, self.y_range, self.x_range),
++                        false => (self.raw.0, self.raw.1, self.x_range, self.y_range),
++                    };
++                    let mut x = (raw_x - x_range.0) as f32 / span(x_range) * w;
++                    let mut y = (raw_y - y_range.0) as f32 / span(y_range) * h;
++                    if self.invert_x {
++                        x = w - x;
++                    }
++                    if self.invert_y {
++                        y = h - y;
++                    }
+                     match (self.was_down, self.down) {
+                         (false, true) => out.push(Event::Touch(Touch::Down(x, y), at)),
+                         (true, true) if self.moved => out.push(Event::Touch(Touch::Move(x, y), at)),
+@@ -189,12 +216,17 @@ pub struct Inputs {
+     seen: HashSet<PathBuf>,
+     /// What the touchscreen is told each time its panel is taken in.
+     touch_writes: Vec<Write>,
++    swap_xy: bool,
++    invert_x: bool,
++    invert_y: bool,
++    #[allow(dead_code)]
++    portrait: bool,
+     w: f32,
+     h: f32,
+ }
+ 
+ impl Inputs {
+-    pub fn open(w: u32, h: u32, touch_writes: Vec<Write>) -> Result<Self> {
++    pub fn open(w: u32, h: u32, touch: &skyward_config::Touch, portrait: bool) -> Result<Self> {
+         let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
+         if fd < 0 {
+             return Err(io::Error::last_os_error()).context("create inotify instance");
+@@ -214,7 +246,13 @@ impl Inputs {
+             panel: None,
+             buttons: Vec::new(),
+             seen: HashSet::new(),
+-            touch_writes,
++            touch_writes: touch.writes.clone(),
++            // A portrait layout has the same axes as the touch grid; the
++            // landscape transform is only for the display's own mode.
++            swap_xy: !portrait && touch.swap_xy,
++            invert_x: !portrait && touch.invert_x,
++            invert_y: !portrait && touch.invert_y,
++            portrait,
+             w: w as f32,
+             h: h as f32,
+         };
+@@ -242,7 +280,7 @@ impl Inputs {
+             eprintln!("input {}: {:?} direct={direct} multitouch={mt} keys={keys}", path.display(), dev.name().unwrap_or("?"));
+             if direct && mt && self.panel.is_none() {
+                 self.wakeful.add(dev.as_raw_fd())?;
+-                self.panel = Some(Panel::new(path, dev)?);
++                self.panel = Some(Panel::new(path, dev, self.swap_xy, self.invert_x, self.invert_y)?);
+                 for w in &self.touch_writes {
+                     fs::write(&w.path, &w.value).with_context(|| format!("write {} to {}", w.value, w.path))?;
+                     skyward_sys::kmsg(&format!("wrote {} to {} for the touchscreen", w.value, w.path))?;
+diff --git a/crates/skyward/src/main.rs b/crates/skyward/src/main.rs
+index c770fe4..85681cd 100644
+--- a/crates/skyward/src/main.rs
++++ b/crates/skyward/src/main.rs
+@@ -250,6 +250,7 @@ fn main() -> Result<()> {
+         Cmd::Recovery => recovery(),
+         Cmd::Reboot { target } => {
+             let p = Power::parse(&target).ok_or_else(|| anyhow!("unknown target {target:?}"))?;
++            let _ = skyward_crypto::data::close();
+             skyward_sys::power(p)
+         }
+         Cmd::Bcb => {
+@@ -750,12 +751,13 @@ fn recovery() -> Result<()> {
+         std::fs::set_permissions(skyward_sys::RUN, std::fs::Permissions::from_mode(0o755))
+             .with_context(|| format!("open {} to the recovery's other users", skyward_sys::RUN))?;
+         skyward_sys::keep_log(Path::new(skyward_sys::LOG))?;
+-        // A recovery that ended with a function of its own in the port took
+-        // the port with it; going through "none" takes that function off.
+-        if skyward_sys::prop("sys.usb.state").is_some_and(|s| s != "adb") {
+-            skyward_sys::usb::set("none", std::time::Duration::from_secs(5))?;
++        // Ask for adb without taking the port down first: some phones'
++        // USB setups do not come back from "none" inside a recovery. A
++        // port that does not take it is left as init set it up, and the
++        // recovery still runs.
++        if let Err(e) = skyward_sys::usb::set("adb", std::time::Duration::from_secs(5)) {
++            skyward_sys::kmsg(&format!("the port did not take adb at once: {e:#}"))?;
+         }
+-        skyward_sys::set_prop("sys.usb.config", "adb")?;
+         let misc = bcb::misc();
+         let message = bcb::read(&misc)?;
+         let request = message.request();
+@@ -763,6 +765,14 @@ fn recovery() -> Result<()> {
+             bcb::clear(&misc)?;
+         }
+         let cfg = DeviceConfig::load(Path::new("/").join(ramdisk::CONFIG))?;
++        // Some phones' SELinux policies refuse the loop worker the use of a
++        // file the recovery opened, so the installed system's APEX bundles
++        // cannot be mounted while it is enforcing. The recovery is already a
++        // root shell on adb; permissive is the state its own programs expect.
++        if cfg.device.permissive {
++            std::fs::write("/sys/fs/selinux/enforce", "0").context("put SELinux in permissive mode")?;
++            skyward_sys::kmsg("SELinux is permissive")?;
++        }
+         skyward_sys::kmsg(&format!(
+             "{} {} recovery up, misc command {:?} args {:?}, asking for {:?}",
+             cfg.device.codename,
+diff --git a/crates/skyward/src/ui.rs b/crates/skyward/src/ui.rs
+index 8ed3ceb..9259d8d 100644
+--- a/crates/skyward/src/ui.rs
++++ b/crates/skyward/src/ui.rs
+@@ -160,18 +160,19 @@ fn normal_max(max: u32) -> Result<u32> {
+         .map(|e| e.map(|e| e.path().join(name)))
+         .collect::<std::io::Result<Vec<_>>>()?
+         .into_iter()
+-        .find(|p| p.is_dir())
+-        .ok_or_else(|| anyhow!("panel {name} is not in the device tree"))?;
++        .find(|p| p.is_dir());
++    // Panels whose driver leaves no node behind, as OnePlus's does, keep
++    // their whole range as the normal maximum.
++    let Some(node) = node else { return Ok(max) };
+     let cell = |prop: &str| -> Result<u32> {
+         let path = node.join(prop);
+         let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+         let cell: [u8; 4] = bytes.as_slice().try_into().map_err(|_| anyhow!("{} is not one cell", path.display()))?;
+         Ok(u32::from_be_bytes(cell))
+     };
+-    let (normal, full) = NORMAL_MAX
+-        .iter()
+-        .find(|(normal, _)| node.join(normal).exists())
+-        .with_context(|| format!("panel {name} gives its normal maximum as none of {NORMAL_MAX:?}"))?;
++    let Some((normal, full)) = NORMAL_MAX.iter().find(|(normal, _)| node.join(normal).exists()) else {
++        return Ok(max);
++    };
+     let (normal, full) = (cell(normal)?, cell(full)?);
+     ensure!(normal > 0 && normal <= full, "panel {name}: normal maximum {normal} out of {full}");
+     Ok((f64::from(max) * f64::from(normal) / f64::from(full)).round() as u32)
+@@ -179,6 +180,9 @@ fn normal_max(max: u32) -> Result<u32> {
+ 
+ /// Leave recovery for the chosen target.
+ fn power(target: Target) -> Result<()> {
++    // Init unmounts what the recovery mounted before it acts; a /data that
++    // is still mounted would leave its shutdown waiting forever.
++    let _ = skyward_crypto::data::close();
+     skyward_sys::power(match target {
+         Target::System => Power::System,
+         Target::Recovery => Power::Recovery,
+@@ -1238,8 +1242,13 @@ impl<'a> Pages<'a> {
+         untaken(&mut unread.battery, "the battery", battery.as_ref().err())?;
+         let info = skyward_info::collect_with(cfg, battery.unwrap_or_default())?;
+         let fonts = Fonts::load(font, 0, mono)?;
++        // Read before the surface picks its layout: the orientation chosen
++        // on an earlier start decides which way the pages are laid out.
++        let kept = settings::read()?;
++        let portrait = kept.settings().is_some_and(|s| s.portrait);
+         let mut surface = KmsSurface::open("/dev/dri/card0")?;
+-        let (w, h) = surface.size();
++        let native = surface.size();
++        let (w, h) = if portrait { (native.1, native.0) } else { native };
+         // A touch controller that follows the panel wakes as the panel goes
+         // from rest to running, and at no other time. The recovery service
+         // running again finds it as the earlier run left it, at rest where the
+@@ -1252,7 +1261,8 @@ impl<'a> Pages<'a> {
+             surface.settle()?;
+         }
+         eprintln!("display {}", surface.describe());
+-        let inputs = Inputs::open(w, h, cfg.touch.writes.clone())?;
++        skyward_sys::kmsg(&format!("display {}", surface.describe()))?;
++        let inputs = Inputs::open(w, h, &cfg.touch, portrait)?;
+         let started = Instant::now();
+         let control = Control::open()?;
+         let haptics = cfg.haptics.as_ref().map(Haptics::open).transpose()?;
+@@ -1280,10 +1290,10 @@ impl<'a> Pages<'a> {
+         // zone. The pages speak the language chosen then, or else the one the
+         // system named with the work it asks for, or the one the installed
+         // system is built to start in, or else the one they last spoke.
+-        let kept = settings::read()?;
+         let locale = request.locale.as_deref().or(info.locale.as_deref());
+         let named = locale.map(Lang::for_locale).transpose()?;
+         app.take_settings(kept.settings(), named);
++        app.state.orientation_switch = cfg.display.orientation_switch;
+         let keeper = Keeper::new(&kept);
+         skyward_sys::kmsg(&format!(
+             "the pages speak {:?}, {}, and the locale named is {}",
+@@ -1306,7 +1316,7 @@ impl<'a> Pages<'a> {
+         let fastboot = first == Screen::Fastboot;
+         let port_at = Instant::now();
+         let mut transfer: Option<Transfer> = None;
+-        if app.state.file_transfer {
++        if cfg.device.mtp && app.state.file_transfer {
+             match Transfer::start(cfg, &info, app.state.time_zone) {
+                 Ok(t) => transfer = Some(t),
+                 Err(e) => {
+@@ -2478,6 +2488,13 @@ impl Pages<'_> {
+         match fx {
+             // Leaving is the user's answer to whatever the request
+             // still kept in misc asked.
++            Effect::Orientation(portrait) => {
++                let mut kept = self.app.settings();
++                kept.portrait = portrait;
++                settings::write(&kept)?;
++                skyward_sys::power(skyward_sys::Power::Recovery)?;
++                return Ok(Vec::new());
++            }
+             Effect::Reboot(target) => {
+                 self.done_with_request()?;
+                 power(target)?
+diff --git a/crates/skyward/src/wlan.rs b/crates/skyward/src/wlan.rs
+index a6e13e5..e3dd5ea 100644
+--- a/crates/skyward/src/wlan.rs
++++ b/crates/skyward/src/wlan.rs
+@@ -40,7 +40,7 @@ const WIFI: u32 = 1010;
+ 
+ /// How long the driver may take to make its interface, the chip's firmware
+ /// loading meanwhile.
+-const INTERFACE_WAIT: Duration = Duration::from_secs(20);
++const INTERFACE_WAIT: Duration = Duration::from_secs(75);
+ 
+ /// How long the supplicant may take to open its control socket.
+ const SOCKET_WAIT: Duration = Duration::from_secs(10);
+@@ -632,6 +632,12 @@ fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
+             skyward_sys::kmsg(&format!("loaded {}", path.display()))?;
+         }
+         for w in &cfg.writes {
++            // A driver makes its switches as its module loads, which may be
++            // a moment after the load returns.
++            if skyward_sys::wait_file(Path::new(&w.path), Duration::from_secs(5)).is_err() {
++                skyward_sys::kmsg(&format!("{} is not there to write {} to", w.path, w.value))?;
++                continue;
++            }
+             fs::write(&w.path, &w.value).with_context(|| format!("write {} to {}", w.value, w.path))?;
+         }
+         let until = Instant::now() + INTERFACE_WAIT;
+@@ -640,6 +646,41 @@ fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
+             thread::sleep(Duration::from_millis(100));
+         }
+     }
++    if cfg.unblock {
++        // The rfkill switches are made as the interface is, and may come a
++        // moment after it; set_up refuses while any still blocks.
++        let dir = Path::new("/sys/class/rfkill");
++        let until = Instant::now() + Duration::from_secs(5);
++        loop {
++            let mut found = false;
++            if let Ok(entries) = fs::read_dir(dir) {
++                for entry in entries.flatten() {
++                    let soft = entry.path().join("soft");
++                    let state = entry.path().join("state");
++                    if soft.exists() {
++                        found = true;
++                        // OnePlus's rfkill treats `state` as the inverse of
++                        // `soft`: writing 0 to `state` blocks the radio.
++                        // Unblock through `soft` and leave `state` alone
++                        // when the radio now reads unblocked.
++                        if fs::write(&soft, "0").is_ok()
++                            && fs::read_to_string(&state).is_ok_and(|v| v.trim() == "1")
++                        {
++                            continue;
++                        }
++                    }
++                    if state.exists() {
++                        found = true;
++                        let _ = fs::write(&state, "0");
++                    }
++                }
++            }
++            if found || Instant::now() >= until {
++                break;
++            }
++            thread::sleep(Duration::from_millis(100));
++        }
++    }
+     iface::set_up(&cfg.interface, true)
+ }
+ 

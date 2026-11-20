@@ -1,0 +1,146 @@
+[device]
+codename = "waffle"
+brand = "OnePlus"
+model = "OnePlus 12"
+ab = true
+soc = { hans = "第三代骁龙®8移动平台", hant = "Snapdragon® 8 Gen 3 行動平台", en = "Snapdragon® 8 Gen 3 Mobile Platform" }
+os_version_prop = "ro.build.display.id"
+# The stock recovery's USB setup carries adb and fastboot only; offering
+# MTP beside them resets the port on OnePlus phones.
+mtp = false
+# OnePlus's SELinux policy refuses the loop worker the use of a file the
+# recovery opened, so the vndk APEX cannot be mounted while enforcing.
+permissive = true
+
+[display]
+width = 1440
+height = 3168
+density = 640
+diagonal = 6.82
+corner_radius = 133
+
+[modules]
+# 屏幕触摸: Synaptics S3910 走 SPI，外挂在一加的 HBP(hbp_core) 层之下。
+# 依赖链按 /proc/modules 的 refcount 推出来的，实际加载顺序要上机试。
+# rfkill, which the WLAN driver asks for, is one of the kernel's own
+# modules on system_dlkm.
+sources = ["vendor_boot", "vendor_dlkm", "vendor", "system_dlkm"]
+# The touchscreen: Goodix's Berlin driver (goodix,gt9916S in the dtbo),
+# behind OnePlus's touch layer. The NFC controller carries the embedded
+# secure element the weaver reaches.
+load = ["oplus_bsp_tp_hbp_goodix_gt99x6", "goodix_ts", "nxp-nci"]
+
+# The modem partition holds the WLAN chip's firmware, which the phone
+# mounts at /vendor/firmware_mnt and its own recovery leaves unmounted.
+[firmware]
+partition = "modem"
+
+# The persist partition, which the phone mounts at /mnt/vendor/persist and
+# which the secure world and the WLAN driver read.
+[partitions]
+mounted = ["persist"]
+
+# The battery gauge and the charging screen run on ADSP; start it, but
+# leave MSS (the cellular modem) offline: starting MSS wedges this kernel's
+# modem watchdog. ADSP alone gives the battery icon its reading.
+[[service]]
+path = "/system/bin/sh"
+args = ["-c", "for r in /sys/class/remoteproc/remoteproc*; do [ -e \"$r/name\" ] || continue; case \"$(cat \"$r/name\")\" in *adsp*) [ \"$(cat \"$r/state\")\" = running ] || echo start > \"$r/state\";; esac; done"]
+oneshot = true
+user = "root"
+groups = ["root"]
+
+# What the phone's own init runs once the system has finished starting, as
+# kernel-post-boot in /vendor/etc/init/hw/init.qti.kernel.rc. The kernel
+# starts the CPU clusters on the performance governor; the script hands them
+# to WALT and lets idle CPUs power down.
+[[service]]
+path = "/vendor/bin/sh"
+args = ["/vendor/bin/init.kernel.post_boot.sh"]
+libraries = ["/system/lib64", "/vendor/lib64"]
+oneshot = true
+user = "root"
+groups = ["root", "system", "wakelock", "graphics"]
+
+# The NFC chip carries the phone's embedded secure element, which the
+# weaver reaches through Android's secure element service. The key services
+# cannot start without the NFC stack: the NXP eSE service waits for the NFC
+# service, and the weaver waits for the eSE service.
+[[service]]
+path = "/odm/bin/hw/vendor.oplus.hardware.nfc_aidl-service"
+libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw", "/odm/lib64"]
+user = "nfc"
+groups = ["nfc"]
+ready_service = "vendor.oplus.hardware.nfc.IOplusNfc/default"
+
+[[service]]
+path = "/odm/bin/hw/vendor.oplus.hardware.nfcExtns-service"
+libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw", "/odm/lib64"]
+user = "system"
+groups = ["nfc", "system"]
+ready_service = "vendor.oplus.hardware.nfcExtns.INfcExtns/default"
+
+[[service]]
+path = "/odm/bin/hw/android.hardware.nfc-service.nxp"
+libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw", "/odm/lib64"]
+user = "nfc"
+groups = ["nfc", "drmrpc", "system"]
+ready_service = "android.hardware.nfc.INfc/default"
+registers = ["vendor.nxp.nxpnfc_aidl.INxpNfc/default"]
+
+# The modem (mss) is deliberately not started: on this Milk kernel its
+# firmware watchdog resets the phone to EDL within a minute. WLAN comes up
+# without it; only cellular is unavailable in recovery, and nothing here
+# needs it.
+# WLAN: Qualcomm's Kiwi v2 on PCIe, driven by qca_cld3_kiwi_v2 over the
+# cnss-kiwi platform driver. Once fs_ready is written, cnss2 powers the
+# chip up and loads its firmware from the modem partition.
+# rfkill 必须排在最前：GKI 把它放在 system_dlkm，而 vendor_dlkm 的
+# modules.dep 不记录这条跨分区的依赖，不显式写就会出现
+# "cfg80211: Unknown symbol rfkill_alloc" 然后 finit_module 报 ENOENT。
+[wlan]
+modules = ["rfkill", "icnss2", "qca_cld3_kiwi_v2"]
+# WCN6750 的固件启动开关。写 1 之后 icnss2 拉起 WPSS、下载
+# qca6750/regdb.bin 和 bdwlan.elf，然后 wlan0 / p2p0 / wifi-aware0 出现。
+writes = [
+    { path = "/sys/kernel/cnss/fs_ready", value = "1" },
+    { path = "/sys/kernel/icnss/wpss_boot", value = "1" },
+    { path = "/sys/devices/platform/soc/b0000000.qcom,cnss-kiwi/fs_ready", value = "1" },
+]
+# OnePlus's driver leaves the radio blocked until its firmware is up, which
+# is only once the interface has been made.
+unblock = true
+firmware = [
+    { name = "wlan/qca_cld/kiwi_v2/WCNSS_qcom_cfg.ini", path = "/vendor/etc/wifi/kiwi_v2/WCNSS_qcom_cfg.ini" },
+]
+interface = "wlan0"
+supplicant = "/vendor/bin/hw/wpa_supplicant"
+libraries = ["/system/lib64", "/vendor/lib64"]
+service = "android.hardware.wifi.supplicant.ISupplicant/default"
+probe = "http://connectivitycheck.gstatic.com/generate_204"
+
+# The vibration motor: Qualcomm's high-voltage haptics driver keeps an
+# input device whose force feedback plays the click. The driver leaves the
+# frequency at nothing until the motor is first played and says the period
+# instead, so the recovery derives the frequency from t_lra_us.
+[haptics]
+resonance = "/sys/class/qcom-haptics/lra_frequency_hz"
+period = "/sys/class/qcom-haptics/t_lra_us"
+strength = { lightest = 0.25, strongest = 0.75 }
+
+[backup]
+efs = ["modemst1", "modemst2", "fsg", "fsc", "persist"]
+# TODO: 一加的安全世界数据目录
+data_skipped = ["vendor/tzstorage", "vendor/qtee", "vendor/fingerprint", "vendor/fpc", "vendor/goodix"]
+
+[wipe]
+logs = [
+    "/data/vendor/diag",
+    "/data/vendor/log",
+    "/data/vendor/oplus/log",
+    "/data/vendor/olog",
+    "/data/vendor/ramdump",
+    "/data/vendor/ssrdump",
+    "/data/vendor/tombstones",
+    "/data/vendor/wifi",
+]

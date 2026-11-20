@@ -1,0 +1,3 @@
+[submodule "skyward"]
+	path = skyward
+	url = https://github.com/kirklin/skyward.git
