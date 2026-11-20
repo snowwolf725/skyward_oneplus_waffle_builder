@@ -25,6 +25,7 @@ jobs:
       - name: Build the recovery service for the phone
         run: |
           cd skyward
+          git apply ../patches/skyward-waffle.patch
           cargo ndk -t arm64-v8a --platform 30 build --locked --release -p skyward
 
       - name: Build the packer
@@ -71,7 +72,6 @@ jobs:
         run: |
           cd skyward
           cp ../patches/waffle.toml devices/waffle.toml
-          git apply ../patches/skyward-waffle.patch
           target/release/skyward-pack recovery \
             --stock "../recovery.img" \
             --binary target/aarch64-linux-android/release/skyward \
