@@ -42,15 +42,16 @@ jobs:
         with:
           repository: "snowwolf725/OnePlus12-fw-repos"
           latest: true
+          tag: PJD110_16.0.1.300(CN01)
           filename: "recovery.zip"
           out-file-path: "./"
+          extract: true
           token: ${{ secrets.GITHUB_TOKEN }}
           
       # 关键诊断：stock ramdisk 里到底有没有打包器硬依赖的
       # system/bin/recovery 和 prop.default。没有就得改 Rust 代码。
       - name: Inspect the stock ramdisk
         run: |
-          unzip recovery.zip
           set +e
           skyward/target/release/skyward-pack list recovery.img > ramdisk.txt 2> list.err
           echo "exit=$?"
