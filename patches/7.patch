@@ -1,4 +1,4 @@
-# Author:      SorasakiHinaHusband
+# Author:      SorasakiHinaHusband, TvTzzz
 # Date:        2026/11/22
 # Description: Patch wlan
 diff --git a/crates/skyward/src/main.rs b/crates/skyward/src/main.rs
