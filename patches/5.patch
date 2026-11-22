@@ -1,0 +1,36 @@
+# Author:      SnowWolf725
+# Date:        2026/11/22
+# Description: Fix system_ext umount bug
+diff --git a/crates/skyward-vab/src/partitions.rs b/crates/skyward-vab/src/partitions.rs
+index cf4c0fb..53f42a8 100644
+--- a/crates/skyward-vab/src/partitions.rs
++++ b/crates/skyward-vab/src/partitions.rs
+@@ -4,6 +4,7 @@ use anyhow::{ensure, Context, Result};
+ use skyward_block::{devnum, dm, mount, BY_NAME};
+ use skyward_lp::{Extent, Metadata, Partition, ATTR_DISABLED};
+ use std::fs;
++use std::io::ErrorKind;
+ use std::path::{Path, PathBuf};
+ 
+ /// A logical partition of super, mapped and mounted read-only.
+@@ -474,9 +475,17 @@ pub fn release_partitions(slot: Slot, busy: &[PathBuf]) -> Result<()> {
+     for m in mounted_partitions(slot)?.into_iter().rev() {
+         if busy.contains(&m.mount_point) {
+             mount::umount_detach_over(&m.mount_point)?;
+-        } else {
+-            mount::umount_over(&m.mount_point)?;
+-            snapshots::unmap_snapshot(&m.partition)?;
++            continue;
++        }
++        // Something other than the services we pinned may hold files on a
++        // partition. Treat a busy mount like a pinned one: detach it lazily
++        // and leave its device in place until the last reference drops.
++        match mount::umount_over(&m.mount_point) {
++            Ok(()) => snapshots::unmap_snapshot(&m.partition)?,
++            Err(e) if e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == ErrorKind::ResourceBusy) => {
++                mount::umount_detach_over(&m.mount_point)?;
++            }
++            Err(e) => return Err(e),
+         }
+     }
+     Ok(())

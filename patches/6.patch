@@ -1,0 +1,29 @@
+# Author:      SorasakiHinaHusband
+# Date:        2026/11/22
+# Description: Patch prop file search path for Oplus
+diff --git a/crates/skyward-info/src/lib.rs b/crates/skyward-info/src/lib.rs
+index 59993e5..d0452a9 100644
+--- a/crates/skyward-info/src/lib.rs
++++ b/crates/skyward-info/src/lib.rs
+@@ -264,7 +264,8 @@ impl SystemProps {
+ 
+ /// The order init reads build.prop files in at boot; later files override
+ /// earlier ones.
+-const PROP_ORDER: [&str; 8] = ["system", "system_ext", "system_dlkm", "vendor", "vendor_dlkm", "odm_dlkm", "odm", "product"];
++const PROP_ORDER: [&str; 9] =
++    ["system", "system_ext", "system_dlkm", "vendor", "vendor_dlkm", "odm_dlkm", "odm", "product", "my_manifest"];
+ 
+ /// What init names the properties the bootloader passes.
+ const BOOT_PROPS: &str = "ro.boot.";
+@@ -286,7 +287,10 @@ pub fn installed_props(slot: Slot) -> Result<HashMap<String, String>> {
+         let files: &[&str] = match base(m).as_str() {
+             "system" => &["system/build.prop"],
+             "vendor" => &["default.prop", "build.prop"],
+-            _ => &["etc/build.prop"],
++            // OnePlus keeps some partitions' build.prop at the root and
++            // others under etc; my_manifest, which carries the ColorOS
++            // version as ro.build.display.id, is one of the former.
++            _ => &["build.prop", "etc/build.prop"],
+         };
+         for f in files {
+             let path = m.mount_point.join(f);

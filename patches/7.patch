@@ -1,0 +1,114 @@
+# Author:      SorasakiHinaHusband
+# Date:        2026/11/22
+# Description: Patch wlan
+diff --git a/crates/skyward/src/main.rs b/crates/skyward/src/main.rs
+index 6d7a44c..9d53225 100644
+--- a/crates/skyward/src/main.rs
++++ b/crates/skyward/src/main.rs
+@@ -559,6 +559,23 @@ fn bring_up(cfg: &DeviceConfig, slot: skyward_vab::Slot, found: Result<keys::Fou
+     for path in load_modules(cfg, &cfg.modules.load)? {
+         skyward_sys::kmsg(&format!("loaded {}", path.display()))?;
+     }
++    // The wireless chip's firmware is brought up as the recovery starts, not
++    // when its page is opened: the driver waits some twenty seconds for the
++    // modem's data service before it makes its interface, and that wait is
++    // better spent before the owner asks for the WLAN than behind the
++    // switch. Why it cannot be brought up goes to the kernel log, as the
++    // page starts it again if it is not there.
++    if let Some(wlan) = &cfg.wlan {
++        for path in load_modules(cfg, &wlan.modules)? {
++            skyward_sys::kmsg(&format!("loaded {} with the WLAN", path.display()))?;
++        }
++        for write in &wlan.writes {
++            match std::fs::write(&write.path, &write.value) {
++                Ok(()) => skyward_sys::kmsg(&format!("wrote {} to {} with the WLAN's driver loading", write.value, write.path))?,
++                Err(e) => skyward_sys::kmsg(&format!("{} was not written: {e}", write.path))?,
++            }
++        }
++    }
+     if !cfg.owners.is_empty() {
+         let handed = hand_over(&cfg.owners)?;
+         skyward_sys::kmsg(&format!("{handed} of the phone's own files handed to the accounts its init gives them"))?;
+diff --git a/crates/skyward-net/src/iface.rs b/crates/skyward-net/src/iface.rs
+index b84b8ca..7a29a16 100644
+--- a/crates/skyward-net/src/iface.rs
++++ b/crates/skyward-net/src/iface.rs
+@@ -81,6 +81,10 @@ pub fn set_up(interface: &str, up: bool) -> Result<()> {
+     let fd = socket()?;
+     let mut r = request(interface)?;
+     ioctl(&fd, libc::SIOCGIFFLAGS as libc::c_int, (&mut r as *mut libc::ifreq).cast(), &format!("read how {interface} stands"))?;
++    let already = unsafe { r.ifr_ifru.ifru_flags & libc::IFF_UP as libc::c_short != 0 };
++    if up == already {
++        return Ok(());
++    }
+     unsafe {
+         if up {
+             r.ifr_ifru.ifru_flags |= libc::IFF_UP as libc::c_short;
+diff --git a/crates/skyward/src/wlan.rs b/crates/skyward/src/wlan.rs
+index 734a499..fd35102 100644
+--- a/crates/skyward/src/wlan.rs
++++ b/crates/skyward/src/wlan.rs
+@@ -40,7 +40,7 @@ const WIFI: u32 = 1010;
+ 
+ /// How long the driver may take to make its interface, the chip's firmware
+ /// loading meanwhile.
+-const INTERFACE_WAIT: Duration = Duration::from_secs(20);
++const INTERFACE_WAIT: Duration = Duration::from_secs(75);
+ 
+ /// How long the supplicant may take to open its control socket.
+ const SOCKET_WAIT: Duration = Duration::from_secs(10);
+@@ -632,6 +632,12 @@ fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
+             skyward_sys::kmsg(&format!("loaded {}", path.display()))?;
+         }
+         for w in &cfg.writes {
++            // A driver makes its switches as its module loads, which may be
++            // a moment after the load returns.
++            if skyward_sys::wait_file(Path::new(&w.path), Duration::from_secs(5)).is_err() {
++                skyward_sys::kmsg(&format!("{} is not there to write {} to", w.path, w.value))?;
++                continue;
++            }
+             fs::write(&w.path, &w.value).with_context(|| format!("write {} to {}", w.value, w.path))?;
+         }
+         let until = Instant::now() + INTERFACE_WAIT;
+@@ -640,6 +646,41 @@ fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
+             thread::sleep(Duration::from_millis(100));
+         }
+     }
++    if cfg.unblock {
++        // The rfkill switches are made as the interface is, and may come a
++        // moment after it; set_up refuses while any still blocks.
++        let dir = Path::new("/sys/class/rfkill");
++        let until = Instant::now() + Duration::from_secs(5);
++        loop {
++            let mut found = false;
++            if let Ok(entries) = fs::read_dir(dir) {
++                for entry in entries.flatten() {
++                    let soft = entry.path().join("soft");
++                    let state = entry.path().join("state");
++                    if soft.exists() {
++                        found = true;
++                        // OnePlus's rfkill treats `state` as the inverse of
++                        // `soft`: writing 0 to `state` blocks the radio.
++                        // Unblock through `soft` and leave `state` alone
++                        // when the radio now reads unblocked.
++                        if fs::write(&soft, "0").is_ok()
++                            && fs::read_to_string(&state).is_ok_and(|v| v.trim() == "1")
++                        {
++                            continue;
++                        }
++                    }
++                    if state.exists() {
++                        found = true;
++                        let _ = fs::write(&state, "0");
++                    }
++                }
++            }
++            if found || Instant::now() >= until {
++                break;
++            }
++            thread::sleep(Duration::from_millis(100));
++        }
++    }
+     iface::set_up(&cfg.interface, true)
+ }
+

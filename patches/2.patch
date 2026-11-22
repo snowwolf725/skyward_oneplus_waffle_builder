@@ -1,3 +1,6 @@
+# Author:      SnowWolf725
+# Date:        2026/11/22
+# Description: Fix device name miss match
 diff --git a/crates/skyward-install/src/package.rs b/crates/skyward-install/src/package.rs
 index fbccf61..b79caaf 100644
 --- a/crates/skyward-install/src/package.rs

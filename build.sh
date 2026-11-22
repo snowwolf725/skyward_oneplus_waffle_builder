@@ -1,7 +1,6 @@
 cd skyward
 cp ../patches/waffle.toml devices/
-git apply ../patches/1.patch
-git apply ../patches/1.patch
+for f in $(ls -v ../patches/*.patch); do git apply "$f"; done
 cargo ndk -t arm64-v8a --platform 30 build --release -p skyward
 cargo build --release -p skyward-pack
 cargo ndk -t arm64-v8a --platform 30 clippy --locked -p skyward -p skyward-install -p skyward-systems -p skyward-system-init -- -D warnings

@@ -1,3 +1,6 @@
+# Author:      SorasakiHinaHusband
+# Date:        2026/11/22
+# Description: Patch for OnePlus 12
 diff --git a/crates/skyward-config/src/lib.rs b/crates/skyward-config/src/lib.rs
 index c5eda3d..33aaebd 100644
 --- a/crates/skyward-config/src/lib.rs
@@ -106,32 +109,6 @@ index 6bbdd1c..1668339 100644
      }
      Ok(())
  }
-diff --git a/crates/skyward-info/src/lib.rs b/crates/skyward-info/src/lib.rs
-index 59993e5..d0452a9 100644
---- a/crates/skyward-info/src/lib.rs
-+++ b/crates/skyward-info/src/lib.rs
-@@ -264,7 +264,8 @@ impl SystemProps {
- 
- /// The order init reads build.prop files in at boot; later files override
- /// earlier ones.
--const PROP_ORDER: [&str; 8] = ["system", "system_ext", "system_dlkm", "vendor", "vendor_dlkm", "odm_dlkm", "odm", "product"];
-+const PROP_ORDER: [&str; 9] =
-+    ["system", "system_ext", "system_dlkm", "vendor", "vendor_dlkm", "odm_dlkm", "odm", "product", "my_manifest"];
- 
- /// What init names the properties the bootloader passes.
- const BOOT_PROPS: &str = "ro.boot.";
-@@ -286,7 +287,10 @@ pub fn installed_props(slot: Slot) -> Result<HashMap<String, String>> {
-         let files: &[&str] = match base(m).as_str() {
-             "system" => &["system/build.prop"],
-             "vendor" => &["default.prop", "build.prop"],
--            _ => &["etc/build.prop"],
-+            // OnePlus keeps some partitions' build.prop at the root and
-+            // others under etc; my_manifest, which carries the ColorOS
-+            // version as ro.build.display.id, is one of the former.
-+            _ => &["build.prop", "etc/build.prop"],
-         };
-         for f in files {
-             let path = m.mount_point.join(f);
 diff --git a/crates/skyward-modules/src/lib.rs b/crates/skyward-modules/src/lib.rs
 index ec33ac9..15923de 100644
 --- a/crates/skyward-modules/src/lib.rs
@@ -250,65 +227,6 @@ index ec33ac9..15923de 100644
          let order = g.load_order(&["a.ko".to_string()]);
          assert_eq!(order, vec!["c.ko", "b.ko", "a.ko"]);
      }
-diff --git a/crates/skyward-net/src/github.rs b/crates/skyward-net/src/github.rs
-index ff45a89..67f1215 100644
---- a/crates/skyward-net/src/github.rs
-+++ b/crates/skyward-net/src/github.rs
-@@ -5,7 +5,7 @@ use anyhow::{bail, ensure, Context, Result};
- use serde::Deserialize;
- 
- /// Where GitHub answers which release of Skyward is the newest.
--pub const LATEST: &str = "https://api.github.com/repos/kirklin/skyward/releases/latest";
-+pub const LATEST: &str = "https://api.github.com/repos/snowwolf725/skyward_oneplus_waffle_builder/releases/latest";
- 
- /// The version of GitHub's API the answer is read as.
- const API_VERSION: &str = "2022-11-28";
-diff --git a/crates/skyward-net/src/iface.rs b/crates/skyward-net/src/iface.rs
-index b84b8ca..7a29a16 100644
---- a/crates/skyward-net/src/iface.rs
-+++ b/crates/skyward-net/src/iface.rs
-@@ -81,6 +81,10 @@ pub fn set_up(interface: &str, up: bool) -> Result<()> {
-     let fd = socket()?;
-     let mut r = request(interface)?;
-     ioctl(&fd, libc::SIOCGIFFLAGS as libc::c_int, (&mut r as *mut libc::ifreq).cast(), &format!("read how {interface} stands"))?;
-+    let already = unsafe { r.ifr_ifru.ifru_flags & libc::IFF_UP as libc::c_short != 0 };
-+    if up == already {
-+        return Ok(());
-+    }
-     unsafe {
-         if up {
-             r.ifr_ifru.ifru_flags |= libc::IFF_UP as libc::c_short;
-diff --git a/crates/skyward-pack/src/main.rs b/crates/skyward-pack/src/main.rs
-index a4b9a90..675c52a 100644
---- a/crates/skyward-pack/src/main.rs
-+++ b/crates/skyward-pack/src/main.rs
-@@ -134,6 +134,26 @@ fn main() -> Result<()> {
-             if let Some(e) = rd.entries.iter().find(|e| e.name == "FFiles" || e.name.starts_with("twres")) {
-                 anyhow::bail!("{} holds {}, which is not a stock recovery", stock.display(), e.name);
-             }
-+            // OnePlus's recovery init starts its own phoenix_recovery
-+            // service. The same script also defines the recovery service
-+            // this image replaces, so have init start that instead.
-+            if let Some(init) = rd.entries.iter_mut().find(|e| e.name == "system/etc/init/hw/init.rc") {
-+                let before = b"start phoenix_recovery";
-+                let after = b"start recovery";
-+                if let Some(at) = init.data.windows(before.len()).position(|w| w == before) {
-+                    init.data.splice(at..at + before.len(), after.iter().copied());
-+                    println!("init.rc: the recovery service is started in place of phoenix_recovery");
-+                }
-+                // phoenix_recovery has no class, so `class_start default`
-+                // would start it beside the recovery service; make it
-+                // something only a name starts.
-+                let phoenix = b"service phoenix_recovery /system/bin/phoenix_recovery";
-+                if let Some(at) = init.data.windows(phoenix.len()).position(|w| w == phoenix) {
-+                    let at = at + phoenix.len();
-+                    init.data.splice(at..at, b"\n    disabled".iter().copied());
-+                    println!("init.rc: phoenix_recovery no longer starts with the default class");
-+                }
-+            }
-             let read = |p: &PathBuf| std::fs::read(p).with_context(|| format!("read {}", p.display()));
-             skyward_config::DeviceConfig::load(&config)?;
-             rd.replace(paths::RECOVERY, read(&binary)?)?;
 diff --git a/crates/skyward-programs/src/phone.rs b/crates/skyward-programs/src/phone.rs
 index ad4a541..6daf1d3 100644
 --- a/crates/skyward-programs/src/phone.rs
@@ -626,39 +544,6 @@ index ab27c29..c49e8a8 100644
                          }
                      }
                  }
-diff --git a/crates/skyward-vab/src/partitions.rs b/crates/skyward-vab/src/partitions.rs
-index cf4c0fb..53f42a8 100644
---- a/crates/skyward-vab/src/partitions.rs
-+++ b/crates/skyward-vab/src/partitions.rs
-@@ -4,6 +4,7 @@ use anyhow::{ensure, Context, Result};
- use skyward_block::{devnum, dm, mount, BY_NAME};
- use skyward_lp::{Extent, Metadata, Partition, ATTR_DISABLED};
- use std::fs;
-+use std::io::ErrorKind;
- use std::path::{Path, PathBuf};
- 
- /// A logical partition of super, mapped and mounted read-only.
-@@ -474,9 +475,17 @@ pub fn release_partitions(slot: Slot, busy: &[PathBuf]) -> Result<()> {
-     for m in mounted_partitions(slot)?.into_iter().rev() {
-         if busy.contains(&m.mount_point) {
-             mount::umount_detach_over(&m.mount_point)?;
--        } else {
--            mount::umount_over(&m.mount_point)?;
--            snapshots::unmap_snapshot(&m.partition)?;
-+            continue;
-+        }
-+        // Something other than the services we pinned may hold files on a
-+        // partition. Treat a busy mount like a pinned one: detach it lazily
-+        // and leave its device in place until the last reference drops.
-+        match mount::umount_over(&m.mount_point) {
-+            Ok(()) => snapshots::unmap_snapshot(&m.partition)?,
-+            Err(e) if e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == ErrorKind::ResourceBusy) => {
-+                mount::umount_detach_over(&m.mount_point)?;
-+            }
-+            Err(e) => return Err(e),
-         }
-     }
-     Ok(())
 diff --git a/crates/skyward/src/haptics.rs b/crates/skyward/src/haptics.rs
 index 43e241f..d35da11 100644
 --- a/crates/skyward/src/haptics.rs
@@ -943,71 +828,4 @@ index 06374c8..08ba944 100644
              Effect::Reboot(target) => {
                  self.done_with_request()?;
                  power(target)?
-diff --git a/crates/skyward/src/wlan.rs b/crates/skyward/src/wlan.rs
-index 734a499..fd35102 100644
---- a/crates/skyward/src/wlan.rs
-+++ b/crates/skyward/src/wlan.rs
-@@ -40,7 +40,7 @@ const WIFI: u32 = 1010;
- 
- /// How long the driver may take to make its interface, the chip's firmware
- /// loading meanwhile.
--const INTERFACE_WAIT: Duration = Duration::from_secs(20);
-+const INTERFACE_WAIT: Duration = Duration::from_secs(75);
- 
- /// How long the supplicant may take to open its control socket.
- const SOCKET_WAIT: Duration = Duration::from_secs(10);
-@@ -632,6 +632,12 @@ fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
-             skyward_sys::kmsg(&format!("loaded {}", path.display()))?;
-         }
-         for w in &cfg.writes {
-+            // A driver makes its switches as its module loads, which may be
-+            // a moment after the load returns.
-+            if skyward_sys::wait_file(Path::new(&w.path), Duration::from_secs(5)).is_err() {
-+                skyward_sys::kmsg(&format!("{} is not there to write {} to", w.path, w.value))?;
-+                continue;
-+            }
-             fs::write(&w.path, &w.value).with_context(|| format!("write {} to {}", w.value, w.path))?;
-         }
-         let until = Instant::now() + INTERFACE_WAIT;
-@@ -640,6 +646,41 @@ fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
-             thread::sleep(Duration::from_millis(100));
-         }
-     }
-+    if cfg.unblock {
-+        // The rfkill switches are made as the interface is, and may come a
-+        // moment after it; set_up refuses while any still blocks.
-+        let dir = Path::new("/sys/class/rfkill");
-+        let until = Instant::now() + Duration::from_secs(5);
-+        loop {
-+            let mut found = false;
-+            if let Ok(entries) = fs::read_dir(dir) {
-+                for entry in entries.flatten() {
-+                    let soft = entry.path().join("soft");
-+                    let state = entry.path().join("state");
-+                    if soft.exists() {
-+                        found = true;
-+                        // OnePlus's rfkill treats `state` as the inverse of
-+                        // `soft`: writing 0 to `state` blocks the radio.
-+                        // Unblock through `soft` and leave `state` alone
-+                        // when the radio now reads unblocked.
-+                        if fs::write(&soft, "0").is_ok()
-+                            && fs::read_to_string(&state).is_ok_and(|v| v.trim() == "1")
-+                        {
-+                            continue;
-+                        }
-+                    }
-+                    if state.exists() {
-+                        found = true;
-+                        let _ = fs::write(&state, "0");
-+                    }
-+                }
-+            }
-+            if found || Instant::now() >= until {
-+                break;
-+            }
-+            thread::sleep(Duration::from_millis(100));
-+        }
-+    }
-     iface::set_up(&cfg.interface, true)
- }
  

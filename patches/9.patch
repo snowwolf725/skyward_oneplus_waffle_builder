@@ -1,0 +1,47 @@
+diff --git a/crates/skyward-sys/src/usb.rs b/crates/skyward-sys/src/usb.rs
+index 8e9d840..546c3f5 100644
+--- a/crates/skyward-sys/src/usb.rs
++++ b/crates/skyward-sys/src/usb.rs
+@@ -28,6 +28,14 @@ pub fn set_mtp(on: bool) {
+ /// Ask init for `config` and wait until it is in place. Going to "none"
+ /// also waits for adbd to be gone, so its function is free.
+ pub fn set(config: &str, timeout: Duration) -> Result<()> {
++    // init starts adbd for a configuration that carries file transfer only
++    // while this says the port may be configured at all, and a recovery
++    // whose init never sets it waits for adbd that never comes: the pair
++    // never binds and the port is left offering nothing. The Xiaomi builds
++    // set it; the OnePlus Turbo 6V's does not.
++    if config.contains("mtp") {
++        set_prop("sys.usb.config_disable", "0")?;
++    }
+     set_prop("sys.usb.config", config)?;
+     wait_prop("sys.usb.state", config, timeout)?;
+     if config == "none" {
+diff --git a/crates/skyward/src/main.rs b/crates/skyward/src/main.rs
+index 6d7a44c..9d53225 100644
+--- a/crates/skyward/src/main.rs
++++ b/crates/skyward/src/main.rs
+@@ -559,6 +559,23 @@ fn bring_up(cfg: &DeviceConfig, slot: skyward_vab::Slot, found: Result<keys::Fou
+     for path in load_modules(cfg, &cfg.modules.load)? {
+         skyward_sys::kmsg(&format!("loaded {}", path.display()))?;
+     }
++    // The wireless chip's firmware is brought up as the recovery starts, not
++    // when its page is opened: the driver waits some twenty seconds for the
++    // modem's data service before it makes its interface, and that wait is
++    // better spent before the owner asks for the WLAN than behind the
++    // switch. Why it cannot be brought up goes to the kernel log, as the
++    // page starts it again if it is not there.
++    if let Some(wlan) = &cfg.wlan {
++        for path in load_modules(cfg, &wlan.modules)? {
++            skyward_sys::kmsg(&format!("loaded {} with the WLAN", path.display()))?;
++        }
++        for write in &wlan.writes {
++            match std::fs::write(&write.path, &write.value) {
++                Ok(()) => skyward_sys::kmsg(&format!("wrote {} to {} with the WLAN's driver loading", write.value, write.path))?,
++                Err(e) => skyward_sys::kmsg(&format!("{} was not written: {e}", write.path))?,
++            }
++        }
++    }
+     if !cfg.owners.is_empty() {
+         let handed = hand_over(&cfg.owners)?;
+         skyward_sys::kmsg(&format!("{handed} of the phone's own files handed to the accounts its init gives them"))?;
