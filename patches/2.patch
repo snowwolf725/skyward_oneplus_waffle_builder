@@ -7,7 +7,7 @@ index fbccf61..b79caaf 100644
      }
      let devices = m.get("pre-device").unwrap_or_default();
 -    if !listed(&phone.device, devices) {
-+    if !(listed(&phone.device, devices) || 
++    if !(listed(&phone.device, devices) ||
 +         listed("OP5929L1", devices) ||
 +         listed("OP595DL1", devices)) {
          return Err(Refusal::OtherDevice(devices.to_string()));

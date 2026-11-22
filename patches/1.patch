@@ -390,8 +390,8 @@ index 7c2b8e6..16e6eed 100644
 +const WEAVERS: [(&str, Through, Option<Driver>); 5] = [
      (".thales", Through::ElementService, None),
      (".nxp-qti", Through::ElementService, Some(NXP_CONTROLLER)),
-+    // OnePlus ships NXP's weaver under this name.                                                                     
-+    (".nxp", Through::ElementService, None), 
++    // OnePlus ships NXP's weaver under this name.
++    (".nxp", Through::ElementService, None),
      ("weaver-service", Through::Own("vendor.goodix.hardware.secure_element_aidl.IGdxEse"), None),
 +    // Xiaomi's HyperOS 4 weaver registers Android's IWeaver itself and
 +    // reaches the secure world directly, with no secure element service.
