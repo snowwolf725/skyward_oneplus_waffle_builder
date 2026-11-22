@@ -25,6 +25,7 @@ jobs:
       - name: Build the recovery service for the phone
         run: |
           cd skyward
+          git pull
           git status
           git apply ../patches/1.patch
           git apply ../patches/2.patch
