@@ -25,10 +25,10 @@ jobs:
       - name: Build the recovery service for the phone
         run: |
           cd skyward
-          git pull --ff-only origin main
+          git switch main
+          git pull
           git status
-          git apply ../patches/1.patch
-          git apply ../patches/2.patch
+          for f in $(ls -v ../patches/[0-9]*.patch); do git apply "$f"; done
           cargo ndk -t arm64-v8a --platform 30 build --locked --release -p skyward
 
       - name: Build the packer
