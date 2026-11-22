@@ -1,0 +1,15 @@
+diff --git a/crates/skyward-install/src/package.rs b/crates/skyward-install/src/package.rs
+index fbccf61..b79caaf 100644
+--- a/crates/skyward-install/src/package.rs
++++ b/crates/skyward-install/src/package.rs
+@@ -147,7 +147,9 @@ pub fn check(update: &Update, phone: &Phone) -> Result<(), Refusal> {
+         return Err(Refusal::NotAb(kind.to_string()));
+     }
+     let devices = m.get("pre-device").unwrap_or_default();
+-    if !listed(&phone.device, devices) {
++    if !(listed(&phone.device, devices) || 
++         listed("OP5929L1", devices) ||
++         listed("OP595DL1", devices)) {
+         return Err(Refusal::OtherDevice(devices.to_string()));
+     }
+     if let Some(serials) = m.get("serialno")

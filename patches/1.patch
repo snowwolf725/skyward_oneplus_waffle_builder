@@ -1,5 +1,5 @@
 diff --git a/crates/skyward-config/src/lib.rs b/crates/skyward-config/src/lib.rs
-index 873967f..fd29f07 100644
+index c5eda3d..33aaebd 100644
 --- a/crates/skyward-config/src/lib.rs
 +++ b/crates/skyward-config/src/lib.rs
 @@ -126,6 +126,11 @@ pub struct Wlan {
@@ -14,7 +14,7 @@ index 873967f..fd29f07 100644
      /// The page the stock system asks over plain HTTP to tell whether a
      /// network reaches the internet, which answers 204 with nothing.
      pub probe: String,
-@@ -214,6 +219,11 @@ pub struct Haptics {
+@@ -221,6 +226,11 @@ pub struct Haptics {
      /// The file the driver says the motor's resonant frequency in, in
      /// tenths of a hertz whatever its label.
      pub resonance: String,
@@ -24,9 +24,9 @@ index 873967f..fd29f07 100644
 +    #[serde(default)]
 +    pub period: Option<String>,
      pub strength: Strength,
- }
- 
-@@ -271,6 +281,17 @@ pub struct Device {
+     /// Whether the strength goes into the samples made, each made that
+     /// share of itself and played at the driver's full magnitude, on
+@@ -284,6 +294,17 @@ pub struct Device {
      /// System property that carries the vendor OS version.
      #[serde(default = "default_os_version_prop")]
      pub os_version_prop: String,
@@ -44,7 +44,7 @@ index 873967f..fd29f07 100644
  }
  
  #[derive(Debug, Clone, Default, Deserialize)]
-@@ -288,6 +309,10 @@ pub struct Display {
+@@ -301,6 +322,10 @@ pub struct Display {
      /// sliding over another rounds its leading corners to it.
      #[serde(default)]
      pub corner_radius: u32,
@@ -55,7 +55,7 @@ index 873967f..fd29f07 100644
  }
  
  #[derive(Debug, Clone, Deserialize)]
-@@ -317,6 +342,17 @@ pub struct Touch {
+@@ -330,6 +355,17 @@ pub struct Touch {
      /// step of starting the controller.
      #[serde(default)]
      pub writes: Vec<Write>,
@@ -73,7 +73,7 @@ index 873967f..fd29f07 100644
  }
  
  /// Partitions as the phone itself mounts them.
-@@ -541,6 +577,9 @@ impl DeviceConfig {
+@@ -554,6 +590,9 @@ impl DeviceConfig {
          if let Some(haptics) = &cfg.haptics {
              let file = &haptics.resonance;
              ensure!(Path::new(file).is_absolute(), "[haptics] resonance: {file} is not an absolute path");
@@ -84,10 +84,10 @@ index 873967f..fd29f07 100644
              ensure!(
                  0.0 < lightest && lightest < strongest && strongest <= 1.0,
 diff --git a/crates/skyward-crypto/src/data.rs b/crates/skyward-crypto/src/data.rs
-index 53903a5..0490313 100644
+index 6bbdd1c..1668339 100644
 --- a/crates/skyward-crypto/src/data.rs
 +++ b/crates/skyward-crypto/src/data.rs
-@@ -132,11 +132,16 @@ fn show_owner_storage() -> Result<()> {
+@@ -174,11 +174,16 @@ fn show_owner_storage() -> Result<()> {
  pub fn close() -> Result<()> {
      for at in [SDCARD, MOUNT] {
          if mount::is_mount_point(Path::new(at))? {
@@ -107,10 +107,10 @@ index 53903a5..0490313 100644
      Ok(())
  }
 diff --git a/crates/skyward-info/src/lib.rs b/crates/skyward-info/src/lib.rs
-index 6f5dc71..f806be9 100644
+index 59993e5..d0452a9 100644
 --- a/crates/skyward-info/src/lib.rs
 +++ b/crates/skyward-info/src/lib.rs
-@@ -218,7 +218,8 @@ impl SystemProps {
+@@ -264,7 +264,8 @@ impl SystemProps {
  
  /// The order init reads build.prop files in at boot; later files override
  /// earlier ones.
@@ -120,7 +120,7 @@ index 6f5dc71..f806be9 100644
  
  /// What init names the properties the bootloader passes.
  const BOOT_PROPS: &str = "ro.boot.";
-@@ -240,7 +241,10 @@ pub fn installed_props(slot: Slot) -> Result<HashMap<String, String>> {
+@@ -286,7 +287,10 @@ pub fn installed_props(slot: Slot) -> Result<HashMap<String, String>> {
          let files: &[&str] = match base(m).as_str() {
              "system" => &["system/build.prop"],
              "vendor" => &["default.prop", "build.prop"],
@@ -251,7 +251,7 @@ index ec33ac9..15923de 100644
          assert_eq!(order, vec!["c.ko", "b.ko", "a.ko"]);
      }
 diff --git a/crates/skyward-net/src/github.rs b/crates/skyward-net/src/github.rs
-index ff45a89..9eb9ee2 100644
+index ff45a89..67f1215 100644
 --- a/crates/skyward-net/src/github.rs
 +++ b/crates/skyward-net/src/github.rs
 @@ -5,7 +5,7 @@ use anyhow::{bail, ensure, Context, Result};
@@ -370,10 +370,10 @@ index 22f6b81..c7bb1eb 100644
                  let quoted = word.get_or_insert_with(String::new);
                  loop {
 diff --git a/crates/skyward-programs/src/secure.rs b/crates/skyward-programs/src/secure.rs
-index 33d73a5..7cf8eab 100644
+index 7c2b8e6..16e6eed 100644
 --- a/crates/skyward-programs/src/secure.rs
 +++ b/crates/skyward-programs/src/secure.rs
-@@ -45,16 +45,23 @@ enum Through {
+@@ -45,6 +45,8 @@ enum Through {
      ElementService,
      /// A service of the secure element's maker's own, by its interface.
      Own(&'static str),
@@ -381,44 +381,45 @@ index 33d73a5..7cf8eab 100644
 +    Direct,
  }
  
- /// The makes of weaver, each by what the name of its program ends in, the
- /// longer endings first: Thales' and NXP's go through Android's secure
+ /// The driver of the chip a secure element is in: the kernel module it is,
+@@ -65,10 +67,15 @@ const NXP_CONTROLLER: Driver = Driver { module: "nxp-nci", node: "/dev/nq-nci" }
+ /// recovery has to load one: Thales' and NXP's go through Android's secure
  /// element service, and Goodix's, whose program is named after no maker,
  /// through Goodix's own.
--const WEAVERS: [(&str, Through); 3] = [
-+const WEAVERS: [(&str, Through); 5] = [
-     (".thales", Through::ElementService),
-     (".nxp-qti", Through::ElementService),
-+    // OnePlus ships NXP's weaver under this name.
-+    (".nxp", Through::ElementService),
-     ("weaver-service", Through::Own("vendor.goodix.hardware.secure_element_aidl.IGdxEse")),
+-const WEAVERS: [(&str, Through, Option<Driver>); 3] = [
++const WEAVERS: [(&str, Through, Option<Driver>); 5] = [
+     (".thales", Through::ElementService, None),
+     (".nxp-qti", Through::ElementService, Some(NXP_CONTROLLER)),
++    // OnePlus ships NXP's weaver under this name.                                                                     
++    (".nxp", Through::ElementService, None), 
+     ("weaver-service", Through::Own("vendor.goodix.hardware.secure_element_aidl.IGdxEse"), None),
 +    // Xiaomi's HyperOS 4 weaver registers Android's IWeaver itself and
 +    // reaches the secure world directly, with no secure element service.
-+    ("android.hardware.weaver", Through::Direct),
++    ("android.hardware.weaver", Through::Direct, None),
  ];
  
  /// Qualcomm's programs between Android and the secure world, by the names
-@@ -241,6 +248,7 @@ fn weaver(phone: &Phone) -> Result<Vec<Step>> {
-     let file = file_name(program);
-     let (_, through) = WEAVERS.iter().find(|(ending, _)| file.ends_with(ending)).with_context(|| format!("{} is a weaver of a make the recovery does not know", program.path))?;
+@@ -261,6 +268,7 @@ fn weaver(phone: &Phone) -> Result<Vec<Step>> {
+     let (_, through, driver) = WEAVERS.iter().find(|(ending, ..)| file.ends_with(ending)).with_context(|| format!("{} is a weaver of a make the recovery does not know", program.path))?;
+     out.extend(driver.map(Step::Drive));
      match through {
 +        Through::Direct => {}
          Through::Own(interface) => {
              let own = phone
                  .services
 diff --git a/crates/skyward-ui/src/app/act.rs b/crates/skyward-ui/src/app/act.rs
-index 1033f0c..6856dac 100644
+index ab776c0..02b8bb6 100644
 --- a/crates/skyward-ui/src/app/act.rs
 +++ b/crates/skyward-ui/src/app/act.rs
-@@ -57,6 +57,7 @@ impl App {
+@@ -68,6 +68,7 @@ impl App {
                      Switch::Signature => &mut self.state.check_signature,
                      Switch::KeepRecovery => &mut self.state.keep_recovery,
                      Switch::ShowPassword => &mut self.state.show_password,
 +                    Switch::Portrait => &mut self.state.portrait,
-                     Switch::Wlan => unreachable!("the WLAN switch is turned above"),
+                     Switch::Wlan | Switch::SystemTimeZone => unreachable!("the switch is turned above"),
                  };
                  *on = !*on;
-@@ -65,6 +66,9 @@ impl App {
+@@ -76,6 +77,9 @@ impl App {
                  if switch == Switch::FileTransfer {
                      return vec![Effect::FileTransfer(now_on)];
                  }
@@ -429,7 +430,7 @@ index 1033f0c..6856dac 100644
              Action::MountToggle(i) => {
                  if self.state.mount_failure.take().is_some() {
 diff --git a/crates/skyward-ui/src/app/input.rs b/crates/skyward-ui/src/app/input.rs
-index 9fe100d..5c44425 100644
+index 66d7f07..ccc522a 100644
 --- a/crates/skyward-ui/src/app/input.rs
 +++ b/crates/skyward-ui/src/app/input.rs
 @@ -207,6 +207,11 @@ impl App {
@@ -445,10 +446,10 @@ index 9fe100d..5c44425 100644
                  }
                  Drag::Press { x, y, action: None, .. } if self.screen() == Screen::Editor => self.place_caret(f, x, y + scroll),
 diff --git a/crates/skyward-ui/src/app/mod.rs b/crates/skyward-ui/src/app/mod.rs
-index c05e99f..cae562a 100644
+index 5aa0adf..e11bd4d 100644
 --- a/crates/skyward-ui/src/app/mod.rs
 +++ b/crates/skyward-ui/src/app/mod.rs
-@@ -429,6 +429,8 @@ pub enum Effect {
+@@ -433,6 +433,8 @@ pub enum Effect {
      Screenshot { storage: bool },
      /// Offer internal storage to a computer over USB, or stop.
      FileTransfer(bool),
@@ -458,25 +459,25 @@ index c05e99f..cae562a 100644
      Sideload,
      /// Start installing the file at this path from the top of a place,
 diff --git a/crates/skyward-ui/src/app/prefs.rs b/crates/skyward-ui/src/app/prefs.rs
-index 3475fc3..8a3074b 100644
+index 2892995..a67067b 100644
 --- a/crates/skyward-ui/src/app/prefs.rs
 +++ b/crates/skyward-ui/src/app/prefs.rs
-@@ -29,6 +29,8 @@ pub enum Switch {
+@@ -31,6 +31,8 @@ pub enum Switch {
      Wlan,
      /// Show the password typed rather than a dot for each character.
      ShowPassword,
 +    /// Lay the pages out portrait instead of the display's own landscape.
 +    Portrait,
+     /// Keep the time zone the installed system is set to.
+     SystemTimeZone,
  }
- 
- /// How long the screen stays on with nothing touched, in milliseconds, in
 diff --git a/crates/skyward-ui/src/app/state.rs b/crates/skyward-ui/src/app/state.rs
-index 24de4cc..2bd1531 100644
+index 71677b7..9e752bb 100644
 --- a/crates/skyward-ui/src/app/state.rs
 +++ b/crates/skyward-ui/src/app/state.rs
-@@ -20,6 +20,11 @@ pub struct State {
-     /// place in [`TIME_ZONES`].
-     pub time_zone: usize,
+@@ -32,6 +32,11 @@ pub struct State {
+     /// pages tell how far each zone is from UTC.
+     pub now: i64,
      pub vibrate: bool,
 +    /// The pages are laid out with the long edge down, as a tablet held
 +    /// upright, instead of the display's own landscape mode.
@@ -486,67 +487,37 @@ index 24de4cc..2bd1531 100644
      /// How strongly the motor taps, from 0 at the slider's left end to 1
      /// at its right.
      pub vibration: f32,
-@@ -194,6 +199,8 @@ impl Default for State {
-             screen_off: 3,
-             time_zone: 0,
+@@ -209,6 +214,8 @@ impl Default for State {
+             system_zone: None,
+             now: 0,
              vibrate: true,
 +            portrait: false,
 +            orientation_switch: false,
              vibration: SLIDER_START,
              file_transfer: true,
              reboot: 0,
-diff --git a/crates/skyward-ui/src/pages.rs b/crates/skyward-ui/src/pages.rs
-index 1951193..e100568 100644
---- a/crates/skyward-ui/src/pages.rs
-+++ b/crates/skyward-ui/src/pages.rs
-@@ -371,11 +371,22 @@ pub fn settings(cx: &Ctx) -> Frame {
-         out.push(Hit { rect: r, action: Action::Toggle(Switch::Vibrate) });
-     }
-     y = widgets::section(&mut c, t, f, vibration.bottom, l.pick(["通用", "一般", "General"]));
--    let general = widgets::list(&mut c, t, f, y, &[
-+    let mut general_rows = vec![
-         Row::new(l.pick(LANGUAGE)).icon(BLUE, Icon::Globe).trail(Trail::Value(l.name())),
-         Row::new(l.pick(TIME_ZONE)).icon(ORANGE, Icon::Clock).trail(Trail::Value(l.pick(TIME_ZONES[s.time_zone].0))),
--    ]);
--    out.extend(hits(&general.rows, &[Action::Open(Screen::Language), Action::Open(Screen::TimeZone)]));
-+    ];
-+    let mut general_actions = vec![Action::Open(Screen::Language), Action::Open(Screen::TimeZone)];
-+    if s.orientation_switch {
-+        let value = if s.portrait {
-+            l.pick(["竖屏", "直向", "Portrait"])
-+        } else {
-+            l.pick(["横屏", "橫向", "Landscape"])
-+        };
-+        general_rows.push(Row::new(l.pick(["屏幕方向", "螢幕方向", "Screen orientation"])).icon(SLATE, Icon::Phone).trail(Trail::Value(value)));
-+        general_actions.push(Action::Toggle(Switch::Portrait));
-+    }
-+    let general = widgets::list(&mut c, t, f, y, &general_rows);
-+    out.extend(hits(&general.rows, &general_actions));
-     y = widgets::section(&mut c, t, f, general.bottom, "USB");
-     let usb = widgets::list(&mut c, t, f, y, &[Row::new(l.pick(["文件传输", "檔案傳輸", "File transfer"])).icon(BLUE, Icon::Usb).trail(Trail::Switch(s.file_transfer))]);
-     out.extend(hits(&usb.rows, &[Action::Toggle(Switch::FileTransfer)]));
 diff --git a/crates/skyward-ui/src/settings.rs b/crates/skyward-ui/src/settings.rs
-index 294515b..2123861 100644
+index f5edb27..c403fc9 100644
 --- a/crates/skyward-ui/src/settings.rs
 +++ b/crates/skyward-ui/src/settings.rs
-@@ -45,6 +45,8 @@ pub struct Settings {
-     /// The time zone, by its name in the tz database.
-     pub time_zone: String,
+@@ -51,6 +51,8 @@ pub struct Settings {
+     /// opens.
+     pub system_time_zone: Option<String>,
      pub vibrate: bool,
 +    /// The pages are laid out portrait, with the long edge down.
 +    pub portrait: bool,
      /// The vibration slider's place, from 0 at its left end to 1.
      pub vibration: f32,
      /// A computer connected over USB is offered internal storage.
-@@ -124,6 +126,7 @@ impl Settings {
-             screen_off: SCREEN_OFF[state.screen_off].map_or(0, |ms| ms / 1000),
-             time_zone: TIME_ZONES[state.time_zone].2.to_string(),
+@@ -132,6 +134,7 @@ impl Settings {
+             time_zone: TIME_ZONES[state.time_zone].tz.to_string(),
+             system_time_zone: state.system_zone.as_ref().map(|zone| zone.name.clone()),
              vibrate: state.vibrate,
 +            portrait: state.portrait,
              vibration: state.vibration,
              file_transfer: state.file_transfer,
              install: Install { check_signature: state.check_signature, keep_recovery: state.keep_recovery },
-@@ -170,6 +173,7 @@ impl Settings {
+@@ -178,6 +181,7 @@ impl Settings {
              state.language_chosen = true;
          }
          state.dark = self.dark;
@@ -656,7 +627,7 @@ index ab27c29..c49e8a8 100644
                      }
                  }
 diff --git a/crates/skyward-vab/src/partitions.rs b/crates/skyward-vab/src/partitions.rs
-index 57bc34c..d35f863 100644
+index cf4c0fb..53f42a8 100644
 --- a/crates/skyward-vab/src/partitions.rs
 +++ b/crates/skyward-vab/src/partitions.rs
 @@ -4,6 +4,7 @@ use anyhow::{ensure, Context, Result};
@@ -667,7 +638,7 @@ index 57bc34c..d35f863 100644
  use std::path::{Path, PathBuf};
  
  /// A logical partition of super, mapped and mounted read-only.
-@@ -398,9 +399,17 @@ pub fn release_partitions(slot: Slot, busy: &[PathBuf]) -> Result<()> {
+@@ -474,9 +475,17 @@ pub fn release_partitions(slot: Slot, busy: &[PathBuf]) -> Result<()> {
      for m in mounted_partitions(slot)?.into_iter().rev() {
          if busy.contains(&m.mount_point) {
              mount::umount_detach_over(&m.mount_point)?;
@@ -689,10 +660,10 @@ index 57bc34c..d35f863 100644
      }
      Ok(())
 diff --git a/crates/skyward/src/haptics.rs b/crates/skyward/src/haptics.rs
-index c9419bf..f2c5839 100644
+index 43e241f..d35da11 100644
 --- a/crates/skyward/src/haptics.rs
 +++ b/crates/skyward/src/haptics.rs
-@@ -56,7 +56,21 @@ impl Haptics {
+@@ -58,7 +58,21 @@ impl Haptics {
      /// only as it is played.
      pub fn open(cfg: &skyward_config::Haptics) -> Result<Haptics> {
          let (path, dev) = motor()?;
@@ -827,10 +798,10 @@ index 4a9d65c..2cfc81d 100644
                      fs::write(&w.path, &w.value).with_context(|| format!("write {} to {}", w.value, w.path))?;
                      skyward_sys::kmsg(&format!("wrote {} to {} for the touchscreen", w.value, w.path))?;
 diff --git a/crates/skyward/src/main.rs b/crates/skyward/src/main.rs
-index c770fe4..85681cd 100644
+index 3415161..6d7a44c 100644
 --- a/crates/skyward/src/main.rs
 +++ b/crates/skyward/src/main.rs
-@@ -250,6 +250,7 @@ fn main() -> Result<()> {
+@@ -251,6 +251,7 @@ fn main() -> Result<()> {
          Cmd::Recovery => recovery(),
          Cmd::Reboot { target } => {
              let p = Power::parse(&target).ok_or_else(|| anyhow!("unknown target {target:?}"))?;
@@ -838,7 +809,7 @@ index c770fe4..85681cd 100644
              skyward_sys::power(p)
          }
          Cmd::Bcb => {
-@@ -750,12 +751,13 @@ fn recovery() -> Result<()> {
+@@ -758,12 +759,13 @@ fn recovery() -> Result<()> {
          std::fs::set_permissions(skyward_sys::RUN, std::fs::Permissions::from_mode(0o755))
              .with_context(|| format!("open {} to the recovery's other users", skyward_sys::RUN))?;
          skyward_sys::keep_log(Path::new(skyward_sys::LOG))?;
@@ -857,7 +828,7 @@ index c770fe4..85681cd 100644
          let misc = bcb::misc();
          let message = bcb::read(&misc)?;
          let request = message.request();
-@@ -763,6 +765,14 @@ fn recovery() -> Result<()> {
+@@ -771,6 +773,14 @@ fn recovery() -> Result<()> {
              bcb::clear(&misc)?;
          }
          let cfg = DeviceConfig::load(Path::new("/").join(ramdisk::CONFIG))?;
@@ -873,10 +844,10 @@ index c770fe4..85681cd 100644
              "{} {} recovery up, misc command {:?} args {:?}, asking for {:?}",
              cfg.device.codename,
 diff --git a/crates/skyward/src/ui.rs b/crates/skyward/src/ui.rs
-index 8ed3ceb..9259d8d 100644
+index 06374c8..08ba944 100644
 --- a/crates/skyward/src/ui.rs
 +++ b/crates/skyward/src/ui.rs
-@@ -160,18 +160,19 @@ fn normal_max(max: u32) -> Result<u32> {
+@@ -161,18 +161,19 @@ fn normal_max(max: u32) -> Result<u32> {
          .map(|e| e.map(|e| e.path().join(name)))
          .collect::<std::io::Result<Vec<_>>>()?
          .into_iter()
@@ -902,7 +873,7 @@ index 8ed3ceb..9259d8d 100644
      let (normal, full) = (cell(normal)?, cell(full)?);
      ensure!(normal > 0 && normal <= full, "panel {name}: normal maximum {normal} out of {full}");
      Ok((f64::from(max) * f64::from(normal) / f64::from(full)).round() as u32)
-@@ -179,6 +180,9 @@ fn normal_max(max: u32) -> Result<u32> {
+@@ -180,6 +181,9 @@ fn normal_max(max: u32) -> Result<u32> {
  
  /// Leave recovery for the chosen target.
  fn power(target: Target) -> Result<()> {
@@ -912,7 +883,7 @@ index 8ed3ceb..9259d8d 100644
      skyward_sys::power(match target {
          Target::System => Power::System,
          Target::Recovery => Power::Recovery,
-@@ -1238,8 +1242,13 @@ impl<'a> Pages<'a> {
+@@ -1259,8 +1263,13 @@ impl<'a> Pages<'a> {
          untaken(&mut unread.battery, "the battery", battery.as_ref().err())?;
          let info = skyward_info::collect_with(cfg, battery.unwrap_or_default())?;
          let fonts = Fonts::load(font, 0, mono)?;
@@ -927,7 +898,7 @@ index 8ed3ceb..9259d8d 100644
          // A touch controller that follows the panel wakes as the panel goes
          // from rest to running, and at no other time. The recovery service
          // running again finds it as the earlier run left it, at rest where the
-@@ -1252,7 +1261,8 @@ impl<'a> Pages<'a> {
+@@ -1273,7 +1282,8 @@ impl<'a> Pages<'a> {
              surface.settle()?;
          }
          eprintln!("display {}", surface.describe());
@@ -937,7 +908,7 @@ index 8ed3ceb..9259d8d 100644
          let started = Instant::now();
          let control = Control::open()?;
          let haptics = cfg.haptics.as_ref().map(Haptics::open).transpose()?;
-@@ -1280,10 +1290,10 @@ impl<'a> Pages<'a> {
+@@ -1301,10 +1311,10 @@ impl<'a> Pages<'a> {
          // zone. The pages speak the language chosen then, or else the one the
          // system named with the work it asks for, or the one the installed
          // system is built to start in, or else the one they last spoke.
@@ -949,16 +920,16 @@ index 8ed3ceb..9259d8d 100644
          let keeper = Keeper::new(&kept);
          skyward_sys::kmsg(&format!(
              "the pages speak {:?}, {}, and the locale named is {}",
-@@ -1306,7 +1316,7 @@ impl<'a> Pages<'a> {
+@@ -1335,7 +1345,7 @@ impl<'a> Pages<'a> {
          let fastboot = first == Screen::Fastboot;
          let port_at = Instant::now();
          let mut transfer: Option<Transfer> = None;
 -        if app.state.file_transfer {
 +        if cfg.device.mtp && app.state.file_transfer {
-             match Transfer::start(cfg, &info, app.state.time_zone) {
+             match Transfer::start(cfg, &info, app.state.zone()) {
                  Ok(t) => transfer = Some(t),
                  Err(e) => {
-@@ -2478,6 +2488,13 @@ impl Pages<'_> {
+@@ -2511,6 +2521,13 @@ impl Pages<'_> {
          match fx {
              // Leaving is the user's answer to whatever the request
              // still kept in misc asked.
@@ -973,7 +944,7 @@ index 8ed3ceb..9259d8d 100644
                  self.done_with_request()?;
                  power(target)?
 diff --git a/crates/skyward/src/wlan.rs b/crates/skyward/src/wlan.rs
-index a6e13e5..e3dd5ea 100644
+index 734a499..fd35102 100644
 --- a/crates/skyward/src/wlan.rs
 +++ b/crates/skyward/src/wlan.rs
 @@ -40,7 +40,7 @@ const WIFI: u32 = 1010;
