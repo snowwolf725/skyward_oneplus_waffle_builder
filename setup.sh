@@ -2,5 +2,6 @@ cd skyward
 rustup target add aarch64-linux-android
 cargo install cargo-binstall
 cargo binstall cargo-ndk
-cp ../patches/waffle.toml devices/                                                                                      
+cp ../patches/waffle.toml devices/
+cp -a ../tools .
 for f in $(ls -v ../patches/*.patch); do git apply "$f"; done 
