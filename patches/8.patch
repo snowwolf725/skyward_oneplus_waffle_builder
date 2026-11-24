@@ -1,3 +1,6 @@
+# Author:      SnowWolf725
+# Date:        2026/11/24
+# Description: Patch MTP
 diff --git a/crates/skyward-sys/src/usb.rs b/crates/skyward-sys/src/usb.rs
 index 8e9d840..546c3f5 100644
 --- a/crates/skyward-sys/src/usb.rs
@@ -17,3 +20,116 @@ index 8e9d840..546c3f5 100644
      set_prop("sys.usb.config", config)?;
      wait_prop("sys.usb.state", config, timeout)?;
      if config == "none" {
+diff --git a/crates/skyward-config/src/lib.rs b/crates/skyward-config/src/lib.rs
+index 33aaebd..4a889f2 100644
+--- a/crates/skyward-config/src/lib.rs
++++ b/crates/skyward-config/src/lib.rs
+@@ -305,6 +305,10 @@ pub struct Device {
+     /// leaves it out.
+     #[serde(default = "default_true")]
+     pub mtp: bool,
++    /// Some phones reset the port when MTP is bound beside adb, so they
++    /// offer file transfer alone instead.
++    #[serde(default)]
++    pub mtp_alone: bool,
+ }
+ 
+ #[derive(Debug, Clone, Default, Deserialize)]
+diff --git a/crates/skyward-mtp/src/service.rs b/crates/skyward-mtp/src/service.rs
+index 2ede4f1..038a2fa 100644
+--- a/crates/skyward-mtp/src/service.rs
++++ b/crates/skyward-mtp/src/service.rs
+@@ -87,7 +87,8 @@ impl Service {
+                     // The port loses the function with its descriptors, and
+                     // with it adb, unless it offers adb alone first.
+                     skyward_sys::usb::set_mtp(false);
+-                    if skyward_sys::prop("sys.usb.state").as_deref() == Some("mtp,adb")
++                    let state = skyward_sys::prop("sys.usb.state").unwrap_or_default();
++                    if matches!(state.as_str(), "mtp" | "mtp,adb")
+                         && let Err(e) = skyward_sys::usb::switch("adb", PORT_SWITCH)
+                     {
+                         let _ = kmsg(&format!("mtp: the port kept file transfer: {e:#}"));
+diff --git a/crates/skyward-pack/src/mtp.rc b/crates/skyward-pack/src/mtp.rc
+index 302cfed..b5f7354 100644
+--- a/crates/skyward-pack/src/mtp.rc
++++ b/crates/skyward-pack/src/mtp.rc
+@@ -2,11 +2,23 @@
+ # itself; once it has written the descriptors it sets sys.usb.ffs.mtp.ready,
+ # and with adbd ready too, init binds the two together.
+ on fs && property:sys.usb.configfs=1
++    # adb is started as the filesystems come up, and adbd in the recovery
++    # domain may not open the USB function while the policy enforces; the
++    # port then never leaves "none". Permissive before anything of it.
++    write /sys/fs/selinux/enforce 0
++    # The stock rules mount adb's functionfs in their own "on fs"; a second
++    # mount of the same instance name stands over it, and the gadget keeps
++    # to the first while adbd opens the second. Only the MTP function is
++    # mounted here; adb's is the stock's.
+     mkdir /config/usb_gadget/g1/functions/ffs.mtp
+     mkdir /dev/usb-ffs/mtp 0770 root root
++    # No no_disconnect here: with it, adbd going leaves the function open and
++    # the computer sees a port that answers nothing, which Windows answers by
++    # enumerating the device again; without it the function goes when adbd
++    # does and the port comes back once.
+     mount functionfs mtp /dev/usb-ffs/mtp rmode=0770,fmode=0660,uid=0,gid=0
+ 
+-on property:sys.usb.config=mtp,adb && property:sys.usb.config_disable=0
++on property:sys.usb.config=mtp,adb && property:sys.usb.configfs=1
+     start adbd
+ 
+ on property:sys.usb.config=mtp,adb && property:sys.usb.ffs.ready=1 && property:sys.usb.ffs.mtp.ready=1 && property:sys.usb.configfs=1
+@@ -17,6 +29,36 @@ on property:sys.usb.config=mtp,adb && property:sys.usb.ffs.ready=1 && property:s
+     write /config/usb_gadget/g1/UDC ${sys.usb.controller}
+     setprop sys.usb.state ${sys.usb.config}
+ 
+-# The stock rules take the first function off; this takes the second.
++# File transfer alone, with adb out of the configuration. On this phone the
++# two in one configuration reset the port, so the switch in the settings page
++# picks one: this is the one with the storage, and adb is what it picks when
++# the switch is off.
++#
++# Only the MTP function is bound, and it is the only thing that says the port
++# is up: adbd does not run here to say it, so the rule waits on the function's
++# own readiness alone.
++on property:sys.usb.config=mtp && property:sys.usb.ffs.mtp.ready=1 && property:sys.usb.configfs=1
++    write /config/usb_gadget/g1/idProduct 0x4EE1
++    write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration "mtp"
++    symlink /config/usb_gadget/g1/functions/ffs.mtp /config/usb_gadget/g1/configs/b.1/f1
++    write /config/usb_gadget/g1/UDC ${sys.usb.controller}
++    setprop sys.usb.state ${sys.usb.config}
++
++# adbd is what says the function has its descriptors; when it goes, the
++# function goes with it, and a value left behind would bind a gadget that
++# has none.
++on property:init.svc.adbd=stopped
++    setprop sys.usb.ffs.ready 0
++
++# The stock rules take the first function off; this takes the second, and
++# file transfer's own link with it, so that the next configuration starts
++# from a gadget that holds nothing.
+ on property:sys.usb.config=none && property:sys.usb.configfs=1
+     rm /config/usb_gadget/g1/configs/b.1/f2
++    rm /config/usb_gadget/g1/configs/b.1/f1
++
++# The stock rules bind adb as 18d1:d001, which a Windows computer with
++# Google's driver knows as an ADB interface. They are not bound again from
++# here: taking the gadget off the controller while adbd has its descriptors
++# makes adbd drop sys.usb.ffs.ready, which set this very rule going again,
++# and the port is torn down and made again without end.
+diff --git a/crates/skyward/src/ui.rs b/crates/skyward/src/ui.rs
+index 08ba944..8b95bca 100644
+--- a/crates/skyward/src/ui.rs
++++ b/crates/skyward/src/ui.rs
+@@ -3064,7 +3077,10 @@ impl Pages<'_> {
+                     self.app.report(&skyward_ui::fmt::transfer_left_on(self.app.state.lang, &format!("{e:#}")), now);
+                 }
+             }
+-            (on, t) => unreachable!("the switch turned file transfer {on} while it was {}", t.is_some()),
++            (on, t) => {
++                let running = if t.is_some() { "on" } else { "off" };
++                skyward_sys::kmsg(&format!("file transfer switch {on} but the service is {running}"))?;
++            }
+         }
+         Ok(())
+     }
+
