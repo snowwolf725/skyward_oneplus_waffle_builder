@@ -20,21 +20,6 @@ index 8e9d840..546c3f5 100644
      set_prop("sys.usb.config", config)?;
      wait_prop("sys.usb.state", config, timeout)?;
      if config == "none" {
-diff --git a/crates/skyward-config/src/lib.rs b/crates/skyward-config/src/lib.rs
-index 33aaebd..4a889f2 100644
---- a/crates/skyward-config/src/lib.rs
-+++ b/crates/skyward-config/src/lib.rs
-@@ -305,6 +305,10 @@ pub struct Device {
-     /// leaves it out.
-     #[serde(default = "default_true")]
-     pub mtp: bool,
-+    /// Some phones reset the port when MTP is bound beside adb, so they
-+    /// offer file transfer alone instead.
-+    #[serde(default)]
-+    pub mtp_alone: bool,
- }
- 
- #[derive(Debug, Clone, Default, Deserialize)]
 diff --git a/crates/skyward-mtp/src/service.rs b/crates/skyward-mtp/src/service.rs
 index 2ede4f1..038a2fa 100644
 --- a/crates/skyward-mtp/src/service.rs
