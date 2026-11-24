@@ -6,12 +6,12 @@ Skyward is a recovery written in Rust, from scratch.
 
 | item | value |
 |---|---|
-| Model | OnePlus 12（PJD110/CPH257/CPH2581/CPH2583） |
-| Code Name | `OP5929L1`,  `OP595DL1` |
+| Model | OnePlus 12（PJD110/CPH2573/CPH2581/CPH2583） |
+| Code Name |  `waffle`, `OP5929L1`,  `OP595DL1` |
 | SOC | Qualcomm SM8650（`Pineapple`） |
 | OS | ColorOS/OxygenOS |
 | Partition | Virtual A/B |
-| Touch | OPLUS HBP（`aw/aw_haptic`、`oplus_hbp_core`、`/dev/hbp0`、`/dev/tcm0`）, Synaptics-s3910 |
+| Touch | OPLUS HBP（`aw/aw_haptic`、`oplus_hbp_core`、`/dev/hbp0`、`/dev/tcm0`）, Synaptics-S3910 |
 | Haptics | pm8550b（`/sys/class/qcom-haptics/lra_frequency_hz`） |
 
 ---
