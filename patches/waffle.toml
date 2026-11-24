@@ -6,8 +6,9 @@ ab = true
 soc = { hans = "第三代骁龙®8移动平台", hant = "Snapdragon® 8 Gen 3 行動平台", en = "Snapdragon® 8 Gen 3 Mobile Platform" }
 os_version_prop = "ro.build.display.id"
 # The stock recovery's USB setup carries adb and fastboot only; offering
-# MTP beside them resets the port on OnePlus phones.
-mtp = false
+# MTP beside them resets the port on OnePlus phones; mtp.rc now handles both.
+mtp = true
+mtp_alone = false
 # OnePlus's SELinux policy refuses the loop worker the use of a file the
 # recovery opened, so the vndk APEX cannot be mounted while enforcing.
 permissive = true
