@@ -1,0 +1,93 @@
+diff --git a/crates/skyward-pack/src/main.rs b/crates/skyward-pack/src/main.rs
+index 675c52a..4183350 100644
+--- a/crates/skyward-pack/src/main.rs
++++ b/crates/skyward-pack/src/main.rs
+@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
+ use skyward_config::ramdisk as paths;
+ use std::fs::File;
+ use std::io::{Read, Seek, SeekFrom, Write};
++use std::os::unix::fs::PermissionsExt;
+ use std::path::{Path, PathBuf};
+ 
+ mod avb;
+@@ -175,6 +176,7 @@ fn main() -> Result<()> {
+                 rd.add(paths::TASK_PROFILES, 0o644, TASK_PROFILES.to_vec())?;
+             }
+             rd.add(paths::MTP_RC, 0o644, MTP_RC.to_vec())?;
++            add_tools(&mut rd, Path::new(TOOLS))?;
+             // On an unlocked device adbd keeps root when ro.secure is 0 and
+             // lets any computer in without authorization when ro.adb.secure is
+             // 0; init lets a later line of a property file override an earlier
+@@ -275,6 +277,8 @@ const TASK_PROFILES: &[u8] = include_bytes!("task_profiles.json");
+ /// stock recovery does not offer.
+ const MTP_RC: &[u8] = include_bytes!("mtp.rc");
+ 
++/// The tools folder, relative to where skyward-pack runs.
++const TOOLS: &str = "tools";
+ /// A property file without the lines that set any of `names`.
+ fn without(props: &[u8], names: &[&str]) -> Vec<u8> {
+     let mut out = Vec::with_capacity(props.len());
+@@ -287,6 +291,63 @@ fn without(props: &[u8], names: &[&str]) -> Vec<u8> {
+     out
+ }
+ 
++/// Put the tools on the ramdisk: files beside `root` go to system/bin,
++/// those under `root/lib64` to system/lib64. A name already there is
++/// replaced with the tool's own contents and mode.
++fn add_tools(rd: &mut Ramdisk, root: &Path) -> Result<()> {
++    let put = |rd: &mut Ramdisk, name: &str, mode: u32, data: Vec<u8>| -> Result<()> {
++        let remove = match rd.find(name) {
++            Some(e) => {
++                ensure!(!e.is_dir(), "{name} is a directory in the ramdisk");
++                true
++            }
++            None => false,
++        };
++        if remove {
++            rd.entries.retain(|e| e.name != name);
++        }
++        rd.add(name, mode, data)
++    };
++    let link = |rd: &mut Ramdisk, name: &str, target: &str| -> Result<()> {
++        let remove = match rd.find(name) {
++            Some(e) => {
++                ensure!(!e.is_dir(), "{name} is a directory in the ramdisk");
++                true
++            }
++            None => false,
++        };
++        if remove {
++            rd.entries.retain(|e| e.name != name);
++        }
++        rd.link(name, target)
++    };
++
++    let lib = root.join("lib64");
++    for (dir, into) in [(root, "system/bin"), (lib.as_path(), "system/lib64")] {
++        let mut paths = Vec::new();
++        for entry in std::fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))? {
++            paths.push(entry.with_context(|| format!("read an entry in {}", dir.display()))?.path());
++        }
++        paths.sort();
++        for path in paths {
++            let meta = std::fs::symlink_metadata(&path).with_context(|| format!("stat {}", path.display()))?;
++            let file_name = path.file_name().with_context(|| format!("name of {}", path.display()))?;
++            let name = file_name.to_str().with_context(|| format!("name of {}", path.display()))?;
++            let target = format!("{into}/{name}");
++            if meta.file_type().is_symlink() {
++                let to = std::fs::read_link(&path).with_context(|| format!("read link {}", path.display()))?;
++                let to = to.to_str().with_context(|| format!("target of {}", path.display()))?;
++                link(rd, &target, to)?;
++            } else if meta.is_file() {
++                let mode = meta.permissions().mode() & 0o777;
++                let data = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
++                put(rd, &target, mode, data)?;
++            }
++        }
++    }
++    Ok(())
++}
++
+ /// Write `bytes`, the image `img` makes, to `out`.
+ fn write(out: &Path, img: &BootImage, bytes: &[u8]) -> Result<()> {
+     std::fs::write(out, bytes).with_context(|| format!("write {}", out.display()))?;
