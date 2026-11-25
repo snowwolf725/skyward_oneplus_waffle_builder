@@ -1,3 +1,30 @@
+# Author:      SnowWolf725
+# Date:        2026/11/24
+# Description: Patch MTP
+diff --git a/crates/skyward-install/src/ota.rs b/crates/skyward-install/src/ota.rs
+index f0c31e8..1ea9472 100644
+--- a/crates/skyward-install/src/ota.rs
++++ b/crates/skyward-install/src/ota.rs
+@@ -4,16 +4,16 @@
+ use crate::package::Update;
+ 
+ /// Where the recovery ramdisk keeps it.
+-pub const PROGRAM: &str = "/system/bin/update_engine_sideload";
++pub const PROGRAM: &str = "/system/bin/flashtool.sh";
+ 
+ /// Its arguments for `update`, read from the file `package`; it writes
+ /// its status lines to `status_fd`.
+ pub fn arguments(package: &str, update: &Update, status_fd: i32) -> Vec<String> {
+     vec![
+-        format!("--payload=file://{package}"),
++        package.to_string(),
+         format!("--offset={}", update.payload_offset),
+         format!("--headers={}", update.properties),
+-        format!("--status_fd={status_fd}"),
++        status_fd.to_string(),
+     ]
+ }
+ 
 diff --git a/crates/skyward-pack/src/main.rs b/crates/skyward-pack/src/main.rs
 index 675c52a..4183350 100644
 --- a/crates/skyward-pack/src/main.rs
