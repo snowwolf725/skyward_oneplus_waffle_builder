@@ -1,4 +1,4 @@
-#!/sbin/sh
+#!/system/bin/sh
 ##setup variable 
 export OUTFD=$4;
 
