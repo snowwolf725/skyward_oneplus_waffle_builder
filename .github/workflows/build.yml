@@ -1,6 +1,6 @@
 # Author: lengyue632-commits
 # Mod: SnowWolf725 
-name: Build for OnePlus 12 (CPH2573)
+name: Build for OnePlus 12 (waffle)
 
 on:
   workflow_dispatch:
@@ -76,7 +76,7 @@ jobs:
           cd skyward
           cp ../patches/waffle.toml devices/waffle.toml
           target/release/skyward-pack recovery \
-            --stock "../recovery.img" \
+            --stock "../recovery_stock.img" \
             --binary target/aarch64-linux-android/release/skyward \
             --system-init target/system-init/aarch64-linux-android/release/system-init \
             --config devices/waffle.toml \
