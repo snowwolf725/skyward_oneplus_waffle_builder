@@ -115,6 +115,15 @@ mksuper(){
   superpa+="-F --output $outputimg"
   lpmake $superpa
 }
+
+checkImg(){
+#$tmpdir/payload
+  ui_print "PartitionInfo new $name readonly"
+  ui_print "Will overwrite existing partitions."
+  ui_print "Hashing partition 0 (boot)"
+}
+
+
 ##flash image
 flashImg(){
   Imgdir=$1
