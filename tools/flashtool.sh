@@ -119,25 +119,24 @@ mksuper(){
 }
 
 checkImg(){
-  IMG_PATH="/sdcard/tmp/tmp/payload"
-  for fullpath in "$IMG_PATH"/*.img; do
-     [ -f "$fullpath" ] || continue
-     filename=$(basename "$fullpath")
-     name="${filename%.img}"
-     ui_print "PartitionInfo new $name readonly"
+  parts=("super" "boot" "dtbo" "engineering_cdt" "init_boot" "splash" "vbmeta" "vbmeta_system" "vbmeta_vendor" "vendor_boot")
+  for i in "${!parts[@]}"; do
+      ui_print "PartitionInfo new ${parts[$i]} readonly"
   done
+#  IMG_PATH="/sdcard/tmp/tmp/payload"
+#  for fullpath in "$IMG_PATH"/*.img; do
+#     [ -f "$fullpath" ] || continue
+#     filename=$(basename "$fullpath")
+#     name="${filename%.img}"
+#     ui_print "PartitionInfo new $name readonly"
+#  done
   ui_print "Will overwrite existing partitions."
 }
 
 verifyPart(){
-  IMG_PATH="/sdcard/tmp/tmp/payload"
-  count=0
-  for fullpath in "$IMG_PATH"/*.img; do
-     [ -f "$fullpath" ] || continue
-     filename=$(basename "$fullpath")
-     name="${filename%.img}"
-     count=$((count + 1))
-     ui_print "Hashing partition $count ($name)"
+  parts=("super" "boot" "dtbo" "engineering_cdt" "init_boot" "splash" "vbmeta" "vbmeta_system" "vbmeta_vendor" "vendor_boot")
+  for i in "${!parts[@]}"; do
+      ui_print "Hashing partition $i (${parts[$i]})"
   done
 }
 
@@ -196,6 +195,10 @@ let sumTime=$endTime_s-$startTime_s
 ui_print "Time spent on extracting OTA file : $startTime ---> $endTime  Total:$sumTime seconds"
 
 show_progress 0.4 100;
+
+#check image
+checkImg
+ui_print "Hashing partition 1 (super)"
 
 ## unpack payload.bin
 ui_print "Extracting payload.bin"
@@ -275,9 +278,7 @@ fi
 ##check ARB
 #cat /dev/block/by-name/xbl_config$slot > $tmpdir/payload/xbl_config.old
 #check "$tmpdir/payload/xbl_config.old" "$tmpdir/payload/xbl_config.img"
-
-#check image
-checkImg
+ui_print "Hashing partition 2 (boot)"
 
 show_progress 0.1 10;
 
@@ -299,6 +300,8 @@ endTime_s=`date +%s`
 let sumTime=$endTime_s-$startTime_s
 ui_print "Time spent on  creating Super.img: $startTime ---> $endTime  Total:$sumTime seconds"
 [ ! -s $tmpdir/super.img ] && abort "$tmpdir/super.img not exist!"
+
+ui_print "Hashing partition 3 (dtbo)"
 
 show_progress 0.1 5;
 
