@@ -10,7 +10,7 @@ show_progress() {
 }
 
 ui_print() {
-  echo "$1"
+  echo "$1\n"
   until [ ! "$1" ]; do
     echo "ui_print $1
       ui_print" >> /proc/self/fd/$OUTFD;
@@ -19,7 +19,7 @@ ui_print() {
 }
 
 abort(){
-  echo "$1"
+  echo "$1\n"
   until [ ! "$1" ]; do
     echo "ui_print $1
       ui_print" >> /proc/self/fd/$OUTFD;
@@ -218,7 +218,7 @@ show_progress 0.1 10;
 ##Check version 
 unzip -o "$package" "META-INF/com/android/metadata" -d $tmpdir/
 version=$(cat $tmpdir/META-INF/com/android/metadata |grep version_name_show|cut -d'=' -f2)
-product_name=$(cat $tmpdir/metadata |grep product_name|cut -d'=' -f2)
+product_name=$(cat $tmpdir/META-INF/com/android//metadata |grep product_name|cut -d'=' -f2)
 if [ "$product_name" = "PJD110" ]; then
     ui_print "Version:$version (CN)"
 elif [ "$product_name" = "CPH2573" ]; then
