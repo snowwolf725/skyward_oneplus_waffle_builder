@@ -134,9 +134,11 @@ checkImg(){
 }
 
 verifyPart(){
-  parts=("super" "boot" "dtbo" "engineering_cdt" "init_boot" "splash" "vbmeta" "vbmeta_system" "vbmeta_vendor" "vendor_boot")
-  for i in "${!parts[@]}"; do
-      ui_print "Hashing partition $i (${parts[$i]})"
+  parts=("splash" "vbmeta" "vbmeta_system" "vbmeta_vendor" "vendor_boot")
+  idx=5
+  for part in "${parts[@]}"; do
+    echo "Hashing partition $idx ($part)"
+    idx=$(( idx + 1 ))
   done
 }
 
@@ -198,7 +200,7 @@ show_progress 0.4 100;
 
 #check image
 checkImg
-ui_print "Hashing partition 1 (super)"
+ui_print "Hashing partition 0 (super)"
 
 ## unpack payload.bin
 ui_print "Extracting payload.bin"
@@ -278,7 +280,7 @@ fi
 ##check ARB
 #cat /dev/block/by-name/xbl_config$slot > $tmpdir/payload/xbl_config.old
 #check "$tmpdir/payload/xbl_config.old" "$tmpdir/payload/xbl_config.img"
-ui_print "Hashing partition 2 (boot)"
+ui_print "Hashing partition 1 (boot)"
 
 show_progress 0.1 10;
 
@@ -301,8 +303,7 @@ let sumTime=$endTime_s-$startTime_s
 ui_print "Time spent on  creating Super.img: $startTime ---> $endTime  Total:$sumTime seconds"
 [ ! -s $tmpdir/super.img ] && abort "$tmpdir/super.img not exist!"
 
-ui_print "Hashing partition 3 (dtbo)"
-
+ui_print "Hashing partition 2 (dtbo)"
 show_progress 0.1 5;
 
 ##flash image
@@ -316,6 +317,7 @@ endTime_s=`date +%s`
 let sumTime=$endTime_s-$startTime_s
 ui_print "Time spent on flashing images: $startTime ---> $endTime  Total:$sumTime seconds"
 
+ui_print "Hashing partition 3 (init_boot)"
 show_progress 0.1 10;
 
 ui_print "Flashing Super image"
@@ -327,6 +329,8 @@ endTime=`date +%Y%m%d-%H:%M:%S`
 endTime_s=`date +%s`
 let sumTime=$endTime_s-$startTime_s
 ui_print "Time spent on flashing Super image: $startTime ---> $endTime  Total:$sumTime seconds"
+
+ui_print "Hashing partition 4 (engineering_cdt)"
 
 ## set active slot
 ui_print "Modify active slot"
