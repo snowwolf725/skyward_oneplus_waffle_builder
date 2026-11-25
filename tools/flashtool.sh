@@ -120,7 +120,7 @@ mksuper(){
 
 checkImg(){
   IMG_PATH="/sdcard/tmp/tmp/payload"
-  for fullpath in "$TARGET"/*.img; do
+  for fullpath in "$IMG_PATH"/*.img; do
      [ -f "$fullpath" ] || continue
      filename=$(basename "$fullpath")
      name="${filename%.img}"
@@ -132,7 +132,7 @@ checkImg(){
 verifyPart(){
   IMG_PATH="/sdcard/tmp/tmp/payload"
   count=0
-  for fullpath in "$TARGET"/*.img; do
+  for fullpath in "$IMG_PATH"/*.img; do
      [ -f "$fullpath" ] || continue
      filename=$(basename "$fullpath")
      name="${filename%.img}"
@@ -336,7 +336,6 @@ resetprop ro.boot.slot_suffix _a
 
 ##clean
 ui_print "Cleaning tmp folder"
-rm -rf /tmp
 rm -rf  $tmpdir
 
 show_progress 0.1 10;
