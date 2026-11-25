@@ -10,7 +10,7 @@ show_progress() {
 }
 
 ui_print() {
-  echo "$1\n"
+  echo "$1\n" >&2
   until [ ! "$1" ]; do
     echo "ui_print $1
       ui_print" >> /proc/self/fd/$OUTFD;
@@ -19,7 +19,7 @@ ui_print() {
 }
 
 abort(){
-  echo "$1\n"
+  echo "$1\n" >&2
   until [ ! "$1" ]; do
     echo "ui_print $1
       ui_print" >> /proc/self/fd/$OUTFD;
