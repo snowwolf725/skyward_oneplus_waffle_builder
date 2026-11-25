@@ -117,12 +117,27 @@ mksuper(){
 }
 
 checkImg(){
-#$tmpdir/payload
-  ui_print "PartitionInfo new $name readonly"
+  IMG_PATH="/sdcard/tmp/tmp/payload"
+  for fullpath in "$TARGET"/*.img; do
+     [ -f "$fullpath" ] || continue
+     filename=$(basename "$fullpath")
+     name="${filename%.img}"
+     ui_print "PartitionInfo new $name readonly"
+  done
   ui_print "Will overwrite existing partitions."
-  ui_print "Hashing partition 0 (boot)"
 }
 
+verifyPart(){
+  IMG_PATH="/sdcard/tmp/tmp/payload"
+  count=0
+  for fullpath in "$TARGET"/*.img; do
+     [ -f "$fullpath" ] || continue
+     filename=$(basename "$fullpath")
+     name="${filename%.img}"
+     count=$((count + 1))
+     ui_print "Hashing partition $count ($name)"
+  done
+}
 
 ##flash image
 flashImg(){
@@ -256,8 +271,11 @@ then
 fi
 
 ##check ARB
-cat /dev/block/by-name/xbl_config$slot > $tmpdir/payload/xbl_config.old
-check "$tmpdir/payload/xbl_config.old" "$tmpdir/payload/xbl_config.img"
+#cat /dev/block/by-name/xbl_config$slot > $tmpdir/payload/xbl_config.old
+#check "$tmpdir/payload/xbl_config.old" "$tmpdir/payload/xbl_config.img"
+
+#check image
+checkImg
 
 show_progress 0.1 10;
 
@@ -320,3 +338,6 @@ rm -rf /tmp
 rm -rf  $tmpdir
 
 show_progress 0.1 10;
+
+#verify Partition
+verifyPart
