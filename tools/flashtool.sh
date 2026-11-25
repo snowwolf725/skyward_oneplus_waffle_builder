@@ -10,7 +10,7 @@ show_progress() {
 }
 
 ui_print() {
-  echo "$1\n" >&2
+  echo "$1" >&2
   until [ ! "$1" ]; do
     echo "ui_print $1
       ui_print" >> /proc/self/fd/$OUTFD;
@@ -19,7 +19,7 @@ ui_print() {
 }
 
 abort(){
-  echo "$1\n" >&2
+  echo "$1" >&2
   until [ ! "$1" ]; do
     echo "ui_print $1
       ui_print" >> /proc/self/fd/$OUTFD;
@@ -238,7 +238,7 @@ if [ ! -s $tmpdir/payload/my_company.img ]
 then
   ui_print "Pick-up missed partition (my_company)"
   ##pickup image from device 
-  cat /dev/block/by-name/my_company$slot $tmpdir/payload/my_company.img
+  cp /system/lib64/my_company.img $tmpdir/payload/my_company.img
   [ ! -s $tmpdir/payload/my_company.img ] && abort "my_company.img is not found"
 fi
 
@@ -246,7 +246,7 @@ if [ ! -s $tmpdir/payload/my_preload.img ]
 then
   ui_print "Pick-up missed partition (my_preload)"
   ##pickup image from device 
-  cat /dev/block/by-name/my_preload$slot $tmpdir/payload/my_preload.img
+  cp /system/lib64/my_preload.img $tmpdir/payload/my_preload.img
   [ ! -s $tmpdir/payload/my_preload.img ] && abort "my_preload.img not found"
 fi
 
